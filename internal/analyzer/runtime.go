@@ -116,8 +116,12 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 			Command:          fmt.Sprintf("docker compose -f \"%s\" up -d", relativeComposePath),
 			Cwd:              repoPath,
 			Type:             "service-start",
+			Importance:       domain.StepRequired,
 			Risk:             domain.RiskMedium,
 			RequiresApproval: true,
+			EvidenceSource:   "config",
+			ConfirmedBy:      []string{filepath.Base(composePath)},
+			Confidence:       0.91,
 			Reason:           "Docker Compose services were detected and likely need to be running before the app starts.",
 		})
 	}
@@ -136,8 +140,12 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 				Command:          "manual env review required",
 				Cwd:              repoPath,
 				Type:             "env-review",
+				Importance:       domain.StepManual,
 				Risk:             domain.RiskHigh,
 				RequiresApproval: true,
+				EvidenceSource:   "config",
+				ConfirmedBy:      []string{filepath.Base(templatePath)},
+				Confidence:       0.93,
 				Reason:           "Some required env variables depend on user-provided online services or secrets.",
 			})
 		}

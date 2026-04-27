@@ -66,14 +66,23 @@ func (p *Planner) BuildPlan(analysis domain.RepositoryAnalysis, env domain.Envir
 				Command:          "manual review required",
 				Cwd:              analysis.RepoPath,
 				Type:             "review",
+				Importance:       domain.StepManual,
 				Risk:             domain.RiskHigh,
 				RequiresApproval: true,
+				EvidenceSource:   "safety-scan",
+				ConfirmedBy:      []string{"repository file scan"},
+				Confidence:       0.96,
 				Reason:           "Potentially risky files were detected during the pre-execution scan.",
 			},
 		}, steps...)
 	}
 
 	sort.SliceStable(steps, func(i, j int) bool {
+		leftImportance := importancePriority(steps[i].Importance)
+		rightImportance := importancePriority(steps[j].Importance)
+		if leftImportance != rightImportance {
+			return leftImportance < rightImportance
+		}
 		return stepPriority(steps[i].Type) < stepPriority(steps[j].Type)
 	})
 
@@ -109,6 +118,23 @@ func stepPriority(stepType string) int {
 		return 6
 	default:
 		return 10
+	}
+}
+
+func importancePriority(importance string) int {
+	switch importance {
+	case domain.StepRequired:
+		return 0
+	case domain.StepRecommended:
+		return 1
+	case domain.StepManual:
+		return 2
+	case domain.StepOptional:
+		return 3
+	case domain.StepUncertain:
+		return 4
+	default:
+		return 5
 	}
 }
 
@@ -149,8 +175,12 @@ func suggestedInstallStep(goos, tool, repoPath string) (domain.ExecutionStep, bo
 		Command:          command,
 		Cwd:              repoPath,
 		Type:             "system-install",
+		Importance:       domain.StepRequired,
 		Risk:             domain.RiskHigh,
 		RequiresApproval: true,
+		EvidenceSource:   "environment",
+		ConfirmedBy:      []string{tool + " missing locally"},
+		Confidence:       0.98,
 		Reason:           fmt.Sprintf("%s is required by the repository but is not installed locally.", tool),
 	}, true
 }
@@ -173,8 +203,12 @@ func envTemplateCopyStep(goos string, analysis domain.RepositoryAnalysis) (domai
 		Command:          "instantrepo internal:prepare-env",
 		Cwd:              analysis.RepoPath,
 		Type:             "env-setup",
+		Importance:       domain.StepRequired,
 		Risk:             domain.RiskLow,
 		RequiresApproval: true,
+		EvidenceSource:   "config",
+		ConfirmedBy:      []string{"env template or env variable requirements detected"},
+		Confidence:       0.97,
 		Reason:           reason,
 	}, true
 }

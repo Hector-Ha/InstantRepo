@@ -60,8 +60,12 @@ type ExecutionStep struct {
 	Command          string `json:"command"`
 	Cwd              string `json:"cwd"`
 	Type             string `json:"type"`
+	Importance       string `json:"importance"`
 	Risk             string `json:"risk"`
 	RequiresApproval bool   `json:"requiresApproval"`
+	EvidenceSource   string `json:"evidenceSource,omitempty"`
+	ConfirmedBy      []string `json:"confirmedBy,omitempty"`
+	Confidence       float64 `json:"confidence"`
 	Reason           string `json:"reason"`
 }
 
@@ -153,4 +157,12 @@ const (
 	RiskLow    = "low"
 	RiskMedium = "medium"
 	RiskHigh   = "high"
+)
+
+const (
+	StepRequired    = "required"
+	StepRecommended = "recommended"
+	StepOptional    = "optional"
+	StepManual      = "manual"
+	StepUncertain   = "uncertain"
 )

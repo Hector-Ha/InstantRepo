@@ -19,20 +19,41 @@ Build the desktop app:
 go build -o InstantRepoDesktop.exe ./cmd/instantrepo-desktop
 ```
 
+The Windows desktop build includes an embedded application manifest so `walk` can use Common Controls v6 correctly. Rebuild the executable after source changes instead of reusing an older binary.
+
 ## Current MVP
 
 - Analyze a GitHub repo URL by shallow-cloning it locally
 - Analyze a local repo path directly
 - Detect basic Node.js, Python, and Go project signals
 - Detect common local tools like `git`, `node`, `npm`, `python`, and `docker`
+- Parse `README.md` as a secondary evidence source for install, run, env, and service commands
 - Detect `.env` templates and classify variables as auto-fillable or user-required
 - Detect Docker Compose-backed local services like Postgres, MongoDB, Redis, and MySQL
 - Generate or update `.env` files with safe local defaults and placeholders for unresolved secrets
 - Attach provider-specific instructions for values that must come from services like OpenAI or MongoDB Atlas
 - Flag suspicious files like scripts and installers before execution
-- Return a JSON plan with requirements, gaps, and suggested steps
+- Return a JSON plan with requirements, gaps, and classified steps
 - Execute a selected plan step locally with an approval gate
 - Offer a Windows desktop workflow on top of the engine
+
+## Trust Model
+
+InstantRepo now uses a file-first trust model:
+
+1. lockfiles and explicit config
+2. manifests and runtime config
+3. env templates and Docker Compose files
+4. `README.md` as supporting evidence
+5. heuristics
+
+README commands are parsed and surfaced, but they do not override manifest-backed commands. Steps are classified as:
+
+- `required`
+- `recommended`
+- `optional`
+- `manual`
+- `uncertain`
 
 ## Run as CLI
 

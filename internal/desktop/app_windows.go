@@ -351,7 +351,7 @@ func (ui *desktopUI) renderAnalysis() {
 	ui.currentSteps = append([]domain.ExecutionStep{}, ui.current.Plan.Steps...)
 	stepTitles := make([]string, 0, len(ui.currentSteps))
 	for _, step := range ui.currentSteps {
-		stepTitles = append(stepTitles, fmt.Sprintf("%s [%s]", step.Title, step.Type))
+		stepTitles = append(stepTitles, fmt.Sprintf("%s [%s | %s]", step.Title, step.Importance, step.Type))
 	}
 	ui.stepList.SetModel(stepTitles)
 	if len(stepTitles) > 0 {
@@ -382,12 +382,21 @@ func (ui *desktopUI) renderSelectedStep() {
 		fmt.Sprintf("Title: %s", step.Title),
 		fmt.Sprintf("ID: %s", step.ID),
 		fmt.Sprintf("Type: %s", step.Type),
+		fmt.Sprintf("Importance: %s", step.Importance),
 		fmt.Sprintf("Risk: %s", step.Risk),
 		fmt.Sprintf("Requires approval: %t", step.RequiresApproval),
+		fmt.Sprintf("Evidence source: %s", step.EvidenceSource),
+		fmt.Sprintf("Confidence: %.2f", step.Confidence),
 		fmt.Sprintf("Command: %s", command),
 		"",
 		"Reason:",
 		step.Reason,
+	}
+	if len(step.ConfirmedBy) > 0 {
+		details = append(details, "", "Confirmed by:")
+		for _, item := range step.ConfirmedBy {
+			details = append(details, "- "+item)
+		}
 	}
 	_ = ui.stepDetailsEd.SetText(strings.Join(details, "\r\n"))
 

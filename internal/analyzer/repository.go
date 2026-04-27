@@ -75,8 +75,12 @@ func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis
 				Command:          "go mod download",
 				Cwd:              repoPath,
 				Type:             "dependency-install",
+				Importance:       domain.StepRequired,
 				Risk:             domain.RiskMedium,
 				RequiresApproval: true,
+				EvidenceSource:   "manifest",
+				ConfirmedBy:      []string{"go.mod"},
+				Confidence:       0.92,
 				Reason:           "Go dependencies need to be downloaded before running the project.",
 			},
 			domain.ExecutionStep{
@@ -85,20 +89,26 @@ func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis
 				Command:          "go run .",
 				Cwd:              repoPath,
 				Type:             "run",
+				Importance:       domain.StepRecommended,
 				Risk:             domain.RiskLow,
 				RequiresApproval: true,
+				EvidenceSource:   "manifest",
+				ConfirmedBy:      []string{"go.mod"},
+				Confidence:       0.74,
 				Reason:           "Common default command for a single-module Go project.",
 			},
 		)
 		analysis.Evidence = append(analysis.Evidence, "go.mod found")
 		analysis.Unknowns = append(analysis.Unknowns, "Go project support is minimal in the current MVP")
 		a.enrichRuntimeContext(&analysis)
+		a.enrichReadmeContext(&analysis)
 		return analysis, nil
 	}
 
 	analysis.ProjectType = "unknown"
 	analysis.Unknowns = append(analysis.Unknowns, "No supported manifest file found")
 	a.enrichRuntimeContext(&analysis)
+	a.enrichReadmeContext(&analysis)
 	return analysis, nil
 }
 
@@ -182,21 +192,35 @@ func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.Reposit
 		Command:          fmt.Sprintf("%s install", manager),
 		Cwd:              repoPath,
 		Type:             "dependency-install",
+		Importance:       domain.StepRequired,
 		Risk:             domain.RiskMedium,
 		RequiresApproval: true,
+		EvidenceSource:   "manifest",
+		ConfirmedBy:      []string{"package.json"},
+		Confidence:       0.95,
 		Reason:           "Node dependencies need to be installed before the project can run.",
 	})
 
 	for _, candidate := range []string{"dev", "start", "build"} {
 		if _, ok := pkg.Scripts[candidate]; ok {
+			importance := domain.StepRecommended
+			confidence := 0.88
+			if candidate == "build" {
+				importance = domain.StepOptional
+				confidence = 0.72
+			}
 			analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
 				ID:               "run-node-script-" + candidate,
 				Title:            fmt.Sprintf("Run npm script %q", candidate),
 				Command:          fmt.Sprintf("%s run %s", manager, candidate),
 				Cwd:              repoPath,
 				Type:             "run",
+				Importance:       importance,
 				Risk:             domain.RiskLow,
 				RequiresApproval: true,
+				EvidenceSource:   "manifest",
+				ConfirmedBy:      []string{"package.json:scripts." + candidate},
+				Confidence:       confidence,
 				Reason:           fmt.Sprintf("Script %q is declared in package.json.", candidate),
 			})
 		}
@@ -211,6 +235,7 @@ func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.Reposit
 	}
 
 	a.enrichRuntimeContext(&analysis)
+	a.enrichReadmeContext(&analysis)
 	return analysis, nil
 }
 
@@ -271,8 +296,12 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 			Command:          "python -m pip install -r requirements.txt",
 			Cwd:              repoPath,
 			Type:             "dependency-install",
+			Importance:       domain.StepRequired,
 			Risk:             domain.RiskMedium,
 			RequiresApproval: true,
+			EvidenceSource:   "manifest",
+			ConfirmedBy:      []string{"requirements.txt"},
+			Confidence:       0.94,
 			Reason:           "requirements.txt lists Python dependencies needed by the project.",
 		})
 	}
@@ -284,8 +313,12 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 			Command:          "python main.py",
 			Cwd:              repoPath,
 			Type:             "run",
+			Importance:       domain.StepRecommended,
 			Risk:             domain.RiskLow,
 			RequiresApproval: true,
+			EvidenceSource:   "heuristic",
+			ConfirmedBy:      []string{"main.py"},
+			Confidence:       0.72,
 			Reason:           "main.py found in the repository root.",
 		})
 	} else if util.FileExists(filepath.Join(repoPath, "app.py")) {
@@ -295,8 +328,12 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 			Command:          "python app.py",
 			Cwd:              repoPath,
 			Type:             "run",
+			Importance:       domain.StepRecommended,
 			Risk:             domain.RiskLow,
 			RequiresApproval: true,
+			EvidenceSource:   "heuristic",
+			ConfirmedBy:      []string{"app.py"},
+			Confidence:       0.68,
 			Reason:           "app.py found in the repository root.",
 		})
 	} else {
@@ -304,6 +341,7 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 	}
 
 	a.enrichRuntimeContext(&analysis)
+	a.enrichReadmeContext(&analysis)
 	return analysis
 }
 
