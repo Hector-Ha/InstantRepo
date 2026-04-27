@@ -1,0 +1,10 @@
+*.exe
+*.dll
+*.so
+*.dylib
+*.msi
+*.app
+*.dmg
+dist/
+build/
+bin/
