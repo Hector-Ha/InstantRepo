@@ -4,22 +4,30 @@ InstantRepo is an early MVP for a local repo setup agent. It analyzes a GitHub r
 
 ## Desktop App
 
-There is now a Windows desktop entrypoint that wraps the Go engine in a native workflow:
+The Windows UI is now the Wails app under `cmd/instantrepo-wails`.
 
-- paste a GitHub or GitLab repo URL
-- choose the destination folder on disk
-- clone and analyze the repository
-- generate or refresh a `.env` draft
-- paste external secrets into the built-in env editor
-- run install and setup steps from the app
-
-Build the desktop app:
+Frontend setup:
 
 ```bash
-go build -o InstantRepoDesktop.exe ./cmd/instantrepo-desktop
+cd cmd/instantrepo-wails/frontend
+bun install
 ```
 
-The Windows desktop build includes an embedded application manifest so `walk` can use Common Controls v6 correctly. Rebuild the executable after source changes instead of reusing an older binary.
+Run the app in development:
+
+```bash
+cd cmd/instantrepo-wails
+wails dev
+```
+
+Build a Windows executable:
+
+```bash
+cd cmd/instantrepo-wails
+wails build -clean
+```
+
+With the current `wails.json`, the build output is named `InstantRepo.exe`.
 
 ## Current MVP
 
@@ -35,7 +43,7 @@ The Windows desktop build includes an embedded application manifest so `walk` ca
 - Flag suspicious files like scripts and installers before execution
 - Return a JSON plan with requirements, gaps, and classified steps
 - Execute a selected plan step locally with an approval gate
-- Offer a Windows desktop workflow on top of the engine
+- Offer a Wails-based Windows desktop workflow on top of the engine
 
 ## Trust Model
 
@@ -106,6 +114,6 @@ curl -X POST http://localhost:8080/execute ^
 - Stream live logs instead of returning only final stdout/stderr
 - Improve version matching
 - Expand manifest support and monorepo detection
-- Add packaging for the Windows desktop app and later macOS desktop packaging
+- Add packaging for the Wails desktop app and later macOS desktop packaging
 - Add provider-specific integrations if we ever want real account creation or authenticated secret retrieval
 - Add VirusTotal or similar reputation checks as an optional remote scan layer

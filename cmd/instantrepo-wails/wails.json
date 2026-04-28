@@ -1,0 +1,11 @@
+{
+  "name": "InstantRepo",
+  "outputfilename": "InstantRepo",
+  "frontend:dir": "frontend",
+  "frontend:install": "bun install",
+  "frontend:build": "bun run build",
+  "frontend:dev:watcher": "bun run dev",
+  "frontend:dev:serverUrl": "auto",
+  "assetdir": "frontend/dist",
+  "wailsjsdir": "frontend/src/wailsjs"
+}

@@ -105,6 +105,10 @@ func (s *AppService) ImportRepository(ctx context.Context, repoURL, destinationR
 }
 
 func (s *AppService) Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResponse, error) {
+	return s.ExecuteWithEvents(ctx, req, nil)
+}
+
+func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRequest, onEvent func(ExecutionEvent)) (domain.ExecuteResponse, error) {
 	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{
 		RepoURL:   req.RepoURL,
 		LocalPath: req.LocalPath,
@@ -136,7 +140,7 @@ func (s *AppService) Execute(ctx context.Context, req domain.ExecuteRequest) (do
 	case "env-setup":
 		result, err = s.envFiles.Prepare(analyzeResp.Analysis)
 	default:
-		result, err = s.executor.RunStep(runCtx, *selected)
+		result, err = s.executor.RunStepWithEvents(runCtx, *selected, onEvent)
 	}
 	if err != nil {
 		return domain.ExecuteResponse{}, err

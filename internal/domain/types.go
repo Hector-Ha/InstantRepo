@@ -55,18 +55,18 @@ type ToolRequirement struct {
 }
 
 type ExecutionStep struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	Command          string `json:"command"`
-	Cwd              string `json:"cwd"`
-	Type             string `json:"type"`
-	Importance       string `json:"importance"`
-	Risk             string `json:"risk"`
-	RequiresApproval bool   `json:"requiresApproval"`
-	EvidenceSource   string `json:"evidenceSource,omitempty"`
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Command          string   `json:"command"`
+	Cwd              string   `json:"cwd"`
+	Type             string   `json:"type"`
+	Importance       string   `json:"importance"`
+	Risk             string   `json:"risk"`
+	RequiresApproval bool     `json:"requiresApproval"`
+	EvidenceSource   string   `json:"evidenceSource,omitempty"`
 	ConfirmedBy      []string `json:"confirmedBy,omitempty"`
-	Confidence       float64 `json:"confidence"`
-	Reason           string `json:"reason"`
+	Confidence       float64  `json:"confidence"`
+	Reason           string   `json:"reason"`
 }
 
 type EnvironmentReport struct {
@@ -146,6 +146,7 @@ type ExecutionResult struct {
 	StepID    string `json:"stepId"`
 	Command   string `json:"command"`
 	Cwd       string `json:"cwd"`
+	ProcessID int    `json:"processId"`
 	ExitCode  int    `json:"exitCode"`
 	Stdout    string `json:"stdout"`
 	Stderr    string `json:"stderr"`

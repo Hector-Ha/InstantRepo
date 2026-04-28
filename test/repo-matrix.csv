@@ -1,0 +1,4 @@
+name,url,tier,scenario,expected_stack,has_env_template,has_compose,needs_external_secret,expected_primary_command,status,notes
+example-node,,,Node app,,,,,,,
+example-python,,,Python app,,,,,,,
+example-go,,,Go app,,,,,,,
