@@ -34,6 +34,9 @@ func NewAppService() *AppService {
 }
 
 func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.LocalPath = strings.TrimSpace(req.LocalPath)
+
 	if req.RepoURL == "" && req.LocalPath == "" {
 		return domain.AnalyzeResponse{}, fmt.Errorf("repoUrl or localPath is required")
 	}
@@ -83,7 +86,10 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 }
 
 func (s *AppService) ImportRepository(ctx context.Context, repoURL, destinationRoot string) (domain.AnalyzeResponse, error) {
-	if strings.TrimSpace(repoURL) == "" {
+	repoURL = strings.TrimSpace(repoURL)
+	destinationRoot = strings.TrimSpace(destinationRoot)
+
+	if repoURL == "" {
 		return domain.AnalyzeResponse{}, fmt.Errorf("repo URL is required")
 	}
 
@@ -109,6 +115,14 @@ func (s *AppService) Execute(ctx context.Context, req domain.ExecuteRequest) (do
 }
 
 func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRequest, onEvent func(ExecutionEvent)) (domain.ExecuteResponse, error) {
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.LocalPath = strings.TrimSpace(req.LocalPath)
+	req.StepID = strings.TrimSpace(req.StepID)
+
+	if req.StepID == "" {
+		return domain.ExecuteResponse{}, fmt.Errorf("stepId is required")
+	}
+
 	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{
 		RepoURL:   req.RepoURL,
 		LocalPath: req.LocalPath,
@@ -153,7 +167,7 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 		if refreshErr == nil {
 			analyzeResp = refreshed
 			analyzeResp.Source = domain.RepoSource{
-				Type:    "github",
+				Type:    inferRepoSourceType(req.RepoURL),
 				RepoURL: req.RepoURL,
 				Path:    analyzeResp.Source.Path,
 			}
@@ -172,7 +186,22 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 	}, nil
 }
 
+func (s *AppService) PreviewEnv(ctx context.Context, localPath string) (string, error) {
+	localPath = strings.TrimSpace(localPath)
+	if localPath == "" {
+		return "", fmt.Errorf("localPath is required")
+	}
+
+	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
+	if err != nil {
+		return "", err
+	}
+
+	return s.envFiles.Preview(analyzeResp.Analysis)
+}
+
 func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values map[string]string) (domain.ExecuteResponse, error) {
+	localPath = strings.TrimSpace(localPath)
 	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
 	if err != nil {
 		return domain.ExecuteResponse{}, err
@@ -198,6 +227,7 @@ func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values
 }
 
 func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
+	localPath = strings.TrimSpace(localPath)
 	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
 	if err != nil {
 		return domain.ExecuteResponse{}, err

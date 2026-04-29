@@ -26,6 +26,13 @@ export interface RequirementGap {
   status: string
 }
 
+export interface ToolRequirement {
+  tool: string
+  versionConstraint: string
+  source: string
+  required: boolean
+}
+
 export interface EnvVarRequirement {
   name: string
   source: string
@@ -35,7 +42,7 @@ export interface EnvVarRequirement {
   fillStrategy: string
   service?: string
   suggestedValue?: string
-  instructions: string[]
+  instructions?: string[]
 }
 
 export interface EnvironmentConfig {
@@ -52,7 +59,7 @@ export interface ServiceDependency {
   source: string
   status: string
   details?: string
-  instructions: string[]
+  instructions?: string[]
 }
 
 export interface SafetyFinding {
@@ -76,7 +83,7 @@ export interface ExecutionStep {
   risk: string
   requiresApproval: boolean
   evidenceSource?: string
-  confirmedBy: string[]
+  confirmedBy?: string[]
   confidence: number
   reason: string
 }
@@ -100,6 +107,11 @@ export interface RepositoryAnalysis {
   repoPath: string
   confidence: number
   evidence: string[]
+  requirements?: ToolRequirement[]
+  env?: EnvironmentConfig
+  services?: ServiceDependency[]
+  steps?: ExecutionStep[]
+  unknowns?: string[]
 }
 
 export interface AnalyzeSnapshot {
@@ -107,6 +119,22 @@ export interface AnalyzeSnapshot {
   analysis: RepositoryAnalysis
   environment: EnvironmentReport
   plan: SetupPlan
+}
+
+export interface ExecutionResult {
+  stepId: string
+  command: string
+  cwd: string
+  processId: number
+  exitCode: number
+  stdout: string
+  stderr: string
+  duration: string
+  succeeded: boolean
+}
+
+export interface ExecuteResponse extends AnalyzeSnapshot {
+  result: ExecutionResult
 }
 
 export interface ActivityEntry {

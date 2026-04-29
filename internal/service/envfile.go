@@ -27,6 +27,21 @@ func (m *EnvFileManager) ApplyValues(analysis domain.RepositoryAnalysis, values 
 	return m.prepareWithValues(analysis, values)
 }
 
+func (m *EnvFileManager) Preview(analysis domain.RepositoryAnalysis) (string, error) {
+	if analysis.Env.TargetPath == "" {
+		return "", fmt.Errorf("env target path is not available")
+	}
+
+	existingValues := readEnvValues(analysis.Env.TargetPath)
+	templateLines, err := loadTemplateLines(analysis.Env)
+	if err != nil {
+		return "", err
+	}
+
+	rendered, _ := renderEnvFile(templateLines, existingValues, analysis.Env)
+	return rendered, nil
+}
+
 func (m *EnvFileManager) WriteRaw(repoPath, targetPath, content string) (domain.ExecutionResult, error) {
 	if strings.TrimSpace(targetPath) == "" {
 		return domain.ExecutionResult{}, fmt.Errorf("env target path is not available")
