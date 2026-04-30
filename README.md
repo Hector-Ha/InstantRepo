@@ -1,99 +1,115 @@
 # InstantRepo
 
-InstantRepo is an early MVP for a local repo setup agent. It analyzes a GitHub repository or local folder, detects common project requirements, performs a lightweight safety scan, inspects the local machine, and returns a structured setup plan.
+InstantRepo be local setup helper. Give it Git repo URL or folder. It clone or read repo, detect stack, check local tools, find env needs, scan for risky files, then make setup plan.
 
-## Desktop App
+It have three faces:
 
-The Windows UI is now the Wails app under `cmd/instantrepo-wails`.
+- Wails desktop app for Windows.
+- Go CLI for quick analyze and step run.
+- HTTP API for tool use.
 
-Frontend setup:
+> [!CAUTION]
+> InstantRepo can run commands from repos. Treat unknown repos as unsafe. Read plan and safety notes before approve run.
+
+## What It Does
+
+- Clone GitHub, GitLab, or other Git URL into chosen folder.
+- Analyze local repo folder.
+- Detect Node.js, Python, and Go projects.
+- Detect local tools like `git`, `node`, `bun`, `npm`, `pnpm`, `python`, `go`, and `docker`.
+- Read `README.md` for install, run, env, and service hints.
+- Detect `.env` templates and needed secret values.
+- Draft or update `.env` with safe defaults, while keeping existing values.
+- Detect Docker Compose services like Postgres, MongoDB, Redis, and MySQL.
+- Flag scripts, installers, and binaries before run.
+- Classify setup steps as `required`, `recommended`, `optional`, `manual`, or `uncertain`.
+- Execute one approved step at a time.
+
+## Project Shape
+
+```text
+cmd/instantrepo             Go CLI and API entrypoint
+cmd/instantrepo-wails       Wails desktop app backend
+cmd/instantrepo-wails/frontend
+                            React + Vite UI, built with Bun
+internal/analyzer           Repo, README, runtime, env, and service detection
+internal/service            Planning, execution, env writing, repo clone flow
+internal/api                HTTP endpoints
+internal/domain             Shared response and plan types
+test                        Manual MVP test plan and repo matrix
+```
+
+## Prereqs
+
+- Go `1.26.2`
+- Bun `1.3.3` or newer
+- Wails CLI for desktop dev and build
+- Git
+
+Install frontend deps:
 
 ```bash
 cd cmd/instantrepo-wails/frontend
 bun install
 ```
 
-Run the app in development:
+## Desktop App
+
+Run dev app:
 
 ```bash
 cd cmd/instantrepo-wails
 wails dev
 ```
 
-Build a Windows executable:
+Build Windows app:
 
 ```bash
 cd cmd/instantrepo-wails
 wails build -clean
 ```
 
-With the current `wails.json`, the build output is named `InstantRepo.exe`.
+Output app:
 
-## Current MVP
+```text
+cmd/instantrepo-wails/build/bin/InstantRepo.exe
+```
 
-- Analyze a GitHub repo URL by shallow-cloning it locally
-- Analyze a local repo path directly
-- Detect basic Node.js, Python, and Go project signals
-- Detect common local tools like `git`, `node`, `npm`, `python`, and `docker`
-- Parse `README.md` as a secondary evidence source for install, run, env, and service commands
-- Detect `.env` templates and classify variables as auto-fillable or user-required
-- Detect Docker Compose-backed local services like Postgres, MongoDB, Redis, and MySQL
-- Generate or update `.env` files with safe local defaults and placeholders for unresolved secrets
-- Attach provider-specific instructions for values that must come from services like OpenAI or MongoDB Atlas
-- Flag suspicious files like scripts and installers before execution
-- Return a JSON plan with requirements, gaps, and classified steps
-- Execute a selected plan step locally with an approval gate
-- Offer a Wails-based Windows desktop workflow on top of the engine
+## CLI
 
-## Trust Model
-
-InstantRepo now uses a file-first trust model:
-
-1. lockfiles and explicit config
-2. manifests and runtime config
-3. env templates and Docker Compose files
-4. `README.md` as supporting evidence
-5. heuristics
-
-README commands are parsed and surfaced, but they do not override manifest-backed commands. Steps are classified as:
-
-- `required`
-- `recommended`
-- `optional`
-- `manual`
-- `uncertain`
-
-## Run as CLI
+Analyze repo URL:
 
 ```bash
 go run ./cmd/instantrepo -repo https://github.com/user/repo
 ```
 
-Or analyze a local path:
+Analyze local path:
 
 ```bash
 go run ./cmd/instantrepo -path C:\path\to\repo
 ```
 
-Execute a planned step locally:
+Run one plan step:
 
 ```bash
 go run ./cmd/instantrepo -path C:\path\to\repo -step install-node-deps -approve
 ```
 
-Prepare the repo `.env` file:
+Prepare `.env`:
 
 ```bash
 go run ./cmd/instantrepo -path C:\path\to\repo -step create-env-file -approve
 ```
 
-## Run as API
+## API
+
+Start server:
 
 ```bash
 go run ./cmd/instantrepo -serve :8080
 ```
 
-Then call:
+Analyze:
 
 ```bash
 curl -X POST http://localhost:8080/analyze ^
@@ -101,7 +117,7 @@ curl -X POST http://localhost:8080/analyze ^
   -d "{\"repoUrl\":\"https://github.com/user/repo\"}"
 ```
 
-Execute a specific step:
+Run step:
 
 ```bash
 curl -X POST http://localhost:8080/execute ^
@@ -109,11 +125,40 @@ curl -X POST http://localhost:8080/execute ^
   -d "{\"localPath\":\"C:\\path\\to\\repo\",\"stepId\":\"install-node-deps\",\"approveRisky\":true}"
 ```
 
-## Next Steps
+## Test
 
-- Stream live logs instead of returning only final stdout/stderr
-- Improve version matching
-- Expand manifest support and monorepo detection
-- Add packaging for the Wails desktop app and later macOS desktop packaging
-- Add provider-specific integrations if we ever want real account creation or authenticated secret retrieval
-- Add VirusTotal or similar reputation checks as an optional remote scan layer
+Run Go tests:
+
+```bash
+go test ./...
+```
+
+Build frontend:
+
+```bash
+cd cmd/instantrepo-wails/frontend
+bun run build
+```
+
+Manual MVP test plan live in `test/TEST_PLAN.md`. Repo tracking sheet live in `test/repo-matrix.csv`.
+
+## Trust Model
+
+InstantRepo trust stronger evidence first:
+
+1. Lockfiles and config.
+2. Manifests and runtime files.
+3. Env templates and Docker Compose files.
+4. `README.md` as support.
+5. Guessing.
+
+README commands can help, but do not beat manifest-backed commands.
+
+## Next Work
+
+- Stream live logs while step runs.
+- Improve version match logic.
+- Add monorepo support.
+- Add more manifests and package managers.
+- Package desktop app for Windows and later macOS.
+- Add optional reputation scan for risky files.
