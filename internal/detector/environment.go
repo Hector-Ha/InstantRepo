@@ -18,11 +18,13 @@ func (d *EnvironmentDetector) Detect() domain.EnvironmentReport {
 	tools := []domain.DetectedTool{
 		d.detectTool("git", []string{"--version"}),
 		d.detectTool("node", []string{"--version"}),
+		d.detectTool("bun", []string{"--version"}),
 		d.detectTool("npm", []string{"--version"}),
 		d.detectTool("pnpm", []string{"--version"}),
 		d.detectTool("yarn", []string{"--version"}),
 		d.detectPython(),
 		d.detectPip(),
+		d.detectTool("uv", []string{"--version"}),
 		d.detectTool("go", []string{"version"}),
 		d.detectTool("docker", []string{"--version"}),
 	}

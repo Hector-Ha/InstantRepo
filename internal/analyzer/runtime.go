@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -11,7 +12,14 @@ import (
 	"instantrepo/internal/util"
 )
 
-var envAssignmentPattern = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
+var (
+	envAssignmentPattern = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
+
+	// Code scanner patterns
+	jsEnvPattern = regexp.MustCompile(`process\.env\.([A-Za-z_][A-Za-z0-9_]*)`)
+	goEnvPattern = regexp.MustCompile(`os\.Getenv\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)`)
+	pyEnvPattern = regexp.MustCompile(`os\.(?:environ\.get|getenv)\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)|os\.environ\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]`)
+)
 
 func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAnalysis) {
 	if analysis == nil {
@@ -49,34 +57,57 @@ func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAna
 }
 
 func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.ServiceDependency, []domain.ToolRequirement, []domain.ExecutionStep, []string, []string) {
-	envConfig := domain.EnvironmentConfig{
-		TargetPath: filepath.Join(repoPath, ".env"),
-		Variables:  []domain.EnvVarRequirement{},
-	}
 	services := []domain.ServiceDependency{}
 	requirements := []domain.ToolRequirement{}
 	steps := []domain.ExecutionStep{}
 	evidence := []string{}
 	unknowns := []string{}
 
-	envConfig.TargetExists = util.FileExists(envConfig.TargetPath)
+	envConfig := domain.EnvironmentConfig{
+		Variables: []domain.EnvVarRequirement{},
+	}
 
-	templatePath := findFirstExisting(repoPath, []string{
+	templates := findAllTemplates(repoPath, []string{
 		".env.example",
 		".env.sample",
 		".env.template",
 		".env.local.example",
 		".env.development.example",
 	})
-	if templatePath != "" {
-		envConfig.TemplatePath = templatePath
-		evidence = append(evidence, filepath.Base(templatePath)+" found")
+
+	if len(templates) > 0 {
+		envConfig.TargetExists = false
+		for _, templatePath := range templates {
+			targetDir := filepath.Dir(templatePath)
+			targetPath := filepath.Join(targetDir, ".env")
+			
+			if envConfig.TargetPath == "" {
+				envConfig.TemplatePath = templatePath
+				envConfig.TargetPath = targetPath
+			}
+			
+			if util.FileExists(targetPath) {
+				envConfig.TargetExists = true
+			}
+			
+			vars := parseEnvTemplate(templatePath)
+			for i := range vars {
+				vars[i].TargetDir = targetDir
+			}
+			
+			envConfig.Variables = mergeEnvVars(envConfig.Variables, vars)
+			evidence = append(evidence, filepath.Base(templatePath)+" found in "+targetDir)
+		}
 	}
 
-	existingValues := map[string]string{}
-	if envConfig.TargetExists {
-		existingValues = parseEnvValues(envConfig.TargetPath)
-		evidence = append(evidence, ".env found")
+	codeScannedVars, inferredTargetDir := scanCodeForEnvVars(repoPath)
+	if len(codeScannedVars) > 0 {
+		if envConfig.TargetPath == "" {
+			envConfig.TargetPath = filepath.Join(inferredTargetDir, ".env")
+			envConfig.TargetExists = util.FileExists(envConfig.TargetPath)
+		}
+		envConfig.Variables = mergeEnvVars(envConfig.Variables, codeScannedVars)
+		evidence = append(evidence, "Environment variables inferred from source code scan")
 	}
 
 	composePath := findFirstExisting(repoPath, []string{
@@ -126,13 +157,25 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 		})
 	}
 
-	templateVars := parseEnvTemplate(templatePath)
-	for _, envVar := range templateVars {
-		envRequirement := classifyEnvVar(envVar, existingValues, localServices)
-		envConfig.Variables = append(envConfig.Variables, envRequirement)
+	existingValues := map[string]string{}
+	if envConfig.TargetExists {
+		existingValues = parseEnvValues(envConfig.TargetPath)
+		evidence = append(evidence, ".env found in "+filepath.Dir(envConfig.TargetPath))
 	}
 
+	var classifiedVars []domain.EnvVarRequirement
+	for _, envVar := range envConfig.Variables {
+		envRequirement := classifyEnvVar(envVar, existingValues, localServices)
+		classifiedVars = append(classifiedVars, envRequirement)
+	}
+	envConfig.Variables = classifiedVars
+
 	if len(envConfig.Variables) > 0 {
+		confirmedBy := []string{"source scan"}
+		if envConfig.TemplatePath != "" {
+			confirmedBy = []string{filepath.Base(envConfig.TemplatePath)}
+		}
+
 		if hasUnconfiguredUserVars(envConfig.Variables) {
 			steps = append(steps, domain.ExecutionStep{
 				ID:               "review-env-values",
@@ -144,7 +187,7 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 				Risk:             domain.RiskHigh,
 				RequiresApproval: true,
 				EvidenceSource:   "config",
-				ConfirmedBy:      []string{filepath.Base(templatePath)},
+				ConfirmedBy:      confirmedBy,
 				Confidence:       0.93,
 				Reason:           "Some required env variables depend on user-provided online services or secrets.",
 			})
@@ -174,6 +217,73 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 	}
 
 	return envConfig, services, requirements, steps, evidence, unknowns
+}
+
+func choosePrimaryEnvTemplate(repoPath string, templates []string) string {
+	best := templates[0]
+	bestDepth := strings.Count(filepath.Clean(best), string(filepath.Separator))
+	repoDepth := strings.Count(filepath.Clean(repoPath), string(filepath.Separator))
+
+	for _, candidate := range templates[1:] {
+		candidateDepth := strings.Count(filepath.Clean(candidate), string(filepath.Separator))
+		bestRelativeDepth := bestDepth - repoDepth
+		candidateRelativeDepth := candidateDepth - repoDepth
+
+		if candidateRelativeDepth < bestRelativeDepth ||
+			(candidateRelativeDepth == bestRelativeDepth && len(candidate) < len(best)) {
+			best = candidate
+			bestDepth = candidateDepth
+		}
+	}
+
+	return best
+}
+
+func mergeEnvVars(existing, incoming []domain.EnvVarRequirement) []domain.EnvVarRequirement {
+	if len(incoming) == 0 {
+		return existing
+	}
+
+	seen := make(map[string]bool, len(existing))
+	for _, item := range existing {
+		seen[item.Name] = true
+	}
+
+	for _, item := range incoming {
+		if seen[item.Name] {
+			continue
+		}
+		seen[item.Name] = true
+		existing = append(existing, item)
+	}
+
+	return existing
+}
+
+func findAllTemplates(repoPath string, candidates []string) []string {
+	var matches []string
+	_ = filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "node_modules" || name == ".git" || name == "vendor" || name == "build" || name == "dist" || name == ".next" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		name := d.Name()
+		for _, candidate := range candidates {
+			if name == candidate {
+				matches = append(matches, path)
+				return nil
+			}
+		}
+		return nil
+	})
+	return matches
 }
 
 func findFirstExisting(repoPath string, candidates []string) string {
@@ -230,6 +340,120 @@ func parseEnvTemplate(path string) []domain.EnvVarRequirement {
 	}
 
 	return variables
+}
+
+func findNearestManifest(repoRoot, startDir string) string {
+	current := startDir
+	for {
+		if util.FileExists(filepath.Join(current, "package.json")) ||
+			util.FileExists(filepath.Join(current, "pyproject.toml")) ||
+			util.FileExists(filepath.Join(current, "go.mod")) ||
+			util.FileExists(filepath.Join(current, "requirements.txt")) {
+			return current
+		}
+		if current == repoRoot || current == filepath.Dir(current) || current == "." || current == "/" {
+			break
+		}
+		current = filepath.Dir(current)
+	}
+	return repoRoot
+}
+
+func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
+	seen := map[string]bool{
+		"NODE_ENV": true,
+		"PATH":     true,
+		"HOME":     true,
+		"USER":     true,
+		"PWD":      true,
+		"TZ":       true,
+		"PORT":     true,
+	}
+
+	var variables []domain.EnvVarRequirement
+	targetPathVotes := make(map[string]int)
+
+	_ = filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if d.IsDir() {
+			name := d.Name()
+			if name == "node_modules" || name == ".git" || name == "vendor" || name == "build" || name == "dist" || name == ".next" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		var pattern *regexp.Regexp
+
+		switch ext {
+		case ".js", ".jsx", ".ts", ".tsx":
+			pattern = jsEnvPattern
+		case ".go":
+			pattern = goEnvPattern
+		case ".py":
+			pattern = pyEnvPattern
+		default:
+			return nil
+		}
+
+		content := util.ReadTextFile(path)
+		if content == "" {
+			return nil
+		}
+
+		matches := pattern.FindAllStringSubmatch(content, -1)
+		foundAny := false
+
+		for _, match := range matches {
+			var name string
+			if len(match) > 1 && match[1] != "" {
+				name = match[1]
+			} else if len(match) > 2 && match[2] != "" {
+				name = match[2]
+			}
+
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			foundAny = true
+
+			manifestDir := findNearestManifest(repoPath, filepath.Dir(path))
+
+			variables = append(variables, domain.EnvVarRequirement{
+				Name:           name,
+				Source:         "code scan",
+				Required:       true,
+				Secret:         looksSensitiveEnvVar(name),
+				CurrentStatus:  "missing",
+				FillStrategy:   "user_required",
+				TargetDir:      manifestDir,
+				SuggestedValue: "",
+			})
+		}
+
+		if foundAny {
+			manifestDir := findNearestManifest(repoPath, filepath.Dir(path))
+			targetPathVotes[manifestDir] += len(matches)
+		}
+
+		return nil
+	})
+
+	bestTarget := repoPath
+	maxVotes := -1
+	for dir, votes := range targetPathVotes {
+		if votes > maxVotes {
+			maxVotes = votes
+			bestTarget = dir
+		}
+	}
+
+	return variables, bestTarget
 }
 
 func classifyEnvVar(input domain.EnvVarRequirement, existingValues map[string]string, localServices map[string]domain.ServiceDependency) domain.EnvVarRequirement {

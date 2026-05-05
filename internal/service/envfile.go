@@ -66,37 +66,58 @@ func (m *EnvFileManager) WriteRaw(repoPath, targetPath, content string) (domain.
 }
 
 func (m *EnvFileManager) prepareWithValues(analysis domain.RepositoryAnalysis, values map[string]string) (domain.ExecutionResult, error) {
-	if analysis.Env.TargetPath == "" {
+	if analysis.Env.TargetPath == "" && len(analysis.Env.Variables) == 0 {
 		return domain.ExecutionResult{}, fmt.Errorf("env target path is not available")
 	}
 
 	started := time.Now()
-	existingValues := readEnvValues(analysis.Env.TargetPath)
-	for key, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
+	
+	// Group variables by target dir
+	varsByTarget := make(map[string][]domain.EnvVarRequirement)
+	for _, item := range analysis.Env.Variables {
+		target := item.TargetDir
+		if target == "" {
+			target = filepath.Dir(analysis.Env.TargetPath)
 		}
-		existingValues[key] = trimmed
-	}
-	templateLines, err := loadTemplateLines(analysis.Env)
-	if err != nil {
-		return domain.ExecutionResult{}, err
+		varsByTarget[target] = append(varsByTarget[target], item)
 	}
 
-	rendered, summary := renderEnvFile(templateLines, existingValues, analysis.Env)
-	if err := os.MkdirAll(filepath.Dir(analysis.Env.TargetPath), 0o755); err != nil {
-		return domain.ExecutionResult{}, fmt.Errorf("create env directory: %w", err)
-	}
-	if err := os.WriteFile(analysis.Env.TargetPath, []byte(rendered), 0o644); err != nil {
-		return domain.ExecutionResult{}, fmt.Errorf("write env file: %w", err)
+	var allStdout []string
+	
+	for targetDir, vars := range varsByTarget {
+		targetPath := filepath.Join(targetDir, ".env")
+		existingValues := readEnvValues(targetPath)
+		for key, value := range values {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			existingValues[key] = trimmed
+		}
+		
+		// Create a local env config per target
+		localEnv := analysis.Env
+		localEnv.Variables = vars
+		localEnv.TargetPath = targetPath
+		
+		// Try to find the template if it existed
+		templateLines, _ := loadTemplateLines(localEnv) // Could be empty, handled gracefully
+
+		rendered, summary := renderEnvFile(templateLines, existingValues, localEnv)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return domain.ExecutionResult{}, fmt.Errorf("create env directory: %w", err)
+		}
+		if err := os.WriteFile(targetPath, []byte(rendered), 0o644); err != nil {
+			return domain.ExecutionResult{}, fmt.Errorf("write env file: %w", err)
+		}
+		allStdout = append(allStdout, summary)
 	}
 
 	return domain.ExecutionResult{
 		StepID:    "create-env-file",
 		Command:   "instantrepo internal:prepare-env",
 		Cwd:       analysis.RepoPath,
-		Stdout:    summary,
+		Stdout:    strings.Join(allStdout, "\n"),
 		Duration:  time.Since(started).String(),
 		Succeeded: true,
 	}, nil

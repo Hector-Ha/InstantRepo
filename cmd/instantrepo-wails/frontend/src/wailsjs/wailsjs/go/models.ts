@@ -232,6 +232,7 @@ export namespace domain {
 	    currentStatus: string;
 	    fillStrategy: string;
 	    service?: string;
+	    targetDir?: string;
 	    suggestedValue?: string;
 	    instructions?: string[];
 	
@@ -248,6 +249,7 @@ export namespace domain {
 	        this.currentStatus = source["currentStatus"];
 	        this.fillStrategy = source["fillStrategy"];
 	        this.service = source["service"];
+	        this.targetDir = source["targetDir"];
 	        this.suggestedValue = source["suggestedValue"];
 	        this.instructions = source["instructions"];
 	    }

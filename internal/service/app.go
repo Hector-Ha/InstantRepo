@@ -45,13 +45,13 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 	sourceType := "local"
 	cleanup := func() {}
 
-	if req.RepoURL != "" {
+	if req.RepoURL != "" && req.LocalPath == "" {
 		clonedPath, release, err := s.fetcher.Clone(ctx, req.RepoURL)
 		if err != nil {
 			return domain.AnalyzeResponse{}, err
 		}
 		repoPath = clonedPath
-		sourceType = "github"
+		sourceType = inferRepoSourceType(req.RepoURL)
 		cleanup = release
 	}
 	defer cleanup()
@@ -65,12 +65,13 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 		return domain.AnalyzeResponse{}, fmt.Errorf("repository path not found: %w", err)
 	}
 
-	analysis, err := s.analyzer.Analyze(absPath)
+	environment := s.detector.Detect()
+
+	analysis, err := s.analyzer.Analyze(absPath, environment)
 	if err != nil {
 		return domain.AnalyzeResponse{}, err
 	}
 
-	environment := s.detector.Detect()
 	plan := s.planner.BuildPlan(analysis, environment)
 
 	return domain.AnalyzeResponse{

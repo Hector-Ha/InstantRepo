@@ -3,6 +3,8 @@ package analyzer
 import (
 	"path/filepath"
 	"testing"
+
+	"instantrepo/internal/domain"
 )
 
 func TestAnalyzeMergesReadmeCommandsWithManifestSteps(t *testing.T) {
@@ -16,7 +18,7 @@ func TestAnalyzeMergesReadmeCommandsWithManifestSteps(t *testing.T) {
 }`)
 	writeFile(t, filepath.Join(repoPath, "README.md"), "# Sample\n\n## Installation\n\n```bash\nnpm install\n```\n\n## Development\n\n```bash\nnpm run dev\n```\n")
 
-	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath)
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestAnalyzeAddsReadmeOnlyCommandsAsSecondaryEvidence(t *testing.T) {
 
 	writeFile(t, filepath.Join(repoPath, "README.md"), "# Tool\n\n## Installation\n\n```bash\ngo mod download\n```\n\n## Run\n\n```bash\ngo run .\n```\n")
 
-	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath)
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}

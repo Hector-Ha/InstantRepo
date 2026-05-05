@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"instantrepo/internal/domain"
@@ -19,7 +18,7 @@ func NewRepositoryAnalyzer() *RepositoryAnalyzer {
 	return &RepositoryAnalyzer{}
 }
 
-func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis, error) {
+func (a *RepositoryAnalyzer) Analyze(repoPath string, env domain.EnvironmentReport) (domain.RepositoryAnalysis, error) {
 	info, err := os.Stat(repoPath)
 	if err != nil {
 		return domain.RepositoryAnalysis{}, fmt.Errorf("stat repository: %w", err)
@@ -48,7 +47,7 @@ func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis
 	}
 
 	if util.FileExists(filepath.Join(repoPath, "package.json")) {
-		nodeAnalysis, err := a.analyzeNodeProject(repoPath)
+		nodeAnalysis, err := a.analyzeNodeProject(repoPath, env)
 		if err == nil {
 			return nodeAnalysis, nil
 		}
@@ -56,7 +55,7 @@ func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis
 	}
 
 	if util.FileExists(filepath.Join(repoPath, "requirements.txt")) || util.FileExists(filepath.Join(repoPath, "pyproject.toml")) {
-		return a.analyzePythonProject(repoPath), nil
+		return a.analyzePythonProject(repoPath, env), nil
 	}
 
 	if util.FileExists(filepath.Join(repoPath, "go.mod")) {
@@ -112,7 +111,7 @@ func (a *RepositoryAnalyzer) Analyze(repoPath string) (domain.RepositoryAnalysis
 	return analysis, nil
 }
 
-func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.RepositoryAnalysis, error) {
+func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string, env domain.EnvironmentReport) (domain.RepositoryAnalysis, error) {
 	raw, err := os.ReadFile(filepath.Join(repoPath, "package.json"))
 	if err != nil {
 		return domain.RepositoryAnalysis{}, err
@@ -127,15 +126,7 @@ func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.Reposit
 		return domain.RepositoryAnalysis{}, err
 	}
 
-	manager := "npm"
-	switch {
-	case util.FileExists(filepath.Join(repoPath, "pnpm-lock.yaml")):
-		manager = "pnpm"
-	case util.FileExists(filepath.Join(repoPath, "yarn.lock")):
-		manager = "yarn"
-	case util.FileExists(filepath.Join(repoPath, "package-lock.json")):
-		manager = "npm"
-	}
+	manager, managerEvidence := resolveNodeManager(repoPath, env)
 
 	projectName := pkg.Name
 	if strings.TrimSpace(projectName) == "" {
@@ -211,7 +202,7 @@ func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.Reposit
 			}
 			analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
 				ID:               "run-node-script-" + candidate,
-				Title:            fmt.Sprintf("Run npm script %q", candidate),
+				Title:            fmt.Sprintf("Run %s script %q", manager, candidate),
 				Command:          fmt.Sprintf("%s run %s", manager, candidate),
 				Cwd:              repoPath,
 				Type:             "run",
@@ -230,16 +221,16 @@ func (a *RepositoryAnalyzer) analyzeNodeProject(repoPath string) (domain.Reposit
 		analysis.Unknowns = append(analysis.Unknowns, "No standard run script like dev or start was found in package.json")
 	}
 
-	if slices.Contains([]string{"pnpm", "yarn"}, manager) {
-		analysis.Evidence = append(analysis.Evidence, fmt.Sprintf("Lockfile indicates %s usage", manager))
-	}
+	analysis.Evidence = append(analysis.Evidence, managerEvidence)
 
 	a.enrichRuntimeContext(&analysis)
 	a.enrichReadmeContext(&analysis)
 	return analysis, nil
 }
 
-func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.RepositoryAnalysis {
+func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string, env domain.EnvironmentReport) domain.RepositoryAnalysis {
+	installer, runner, installerEvidence := resolvePythonTools(repoPath, env)
+
 	analysis := domain.RepositoryAnalysis{
 		ProjectName: inferProjectName(repoPath),
 		ProjectType: "python-project",
@@ -247,6 +238,7 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 		Confidence:  0.82,
 		Evidence: []string{
 			"Python manifest detected",
+			installerEvidence,
 		},
 		Requirements: []domain.ToolRequirement{},
 		Env: domain.EnvironmentConfig{
@@ -281,19 +273,20 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 			Required:          true,
 		},
 		domain.ToolRequirement{
-			Tool:              "pip",
+			Tool:              installer,
 			VersionConstraint: "",
-			Source:            "Python package manager",
+			Source:            "Python package manager detection",
 			Required:          true,
 		},
 	)
 
 	if util.FileExists(filepath.Join(repoPath, "requirements.txt")) {
 		analysis.Evidence = append(analysis.Evidence, "requirements.txt found")
+		installCmd := pythonInstallCommand(installer, runner)
 		analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
-			ID:               "pip-install",
+			ID:               "python-install-deps",
 			Title:            "Install Python dependencies",
-			Command:          "python -m pip install -r requirements.txt",
+			Command:          installCmd,
 			Cwd:              repoPath,
 			Type:             "dependency-install",
 			Importance:       domain.StepRequired,
@@ -302,15 +295,33 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 			EvidenceSource:   "manifest",
 			ConfirmedBy:      []string{"requirements.txt"},
 			Confidence:       0.94,
-			Reason:           "requirements.txt lists Python dependencies needed by the project.",
+			Reason:           fmt.Sprintf("requirements.txt lists Python dependencies. Using %s to install.", installer),
+		})
+	} else if util.FileExists(filepath.Join(repoPath, "pyproject.toml")) {
+		analysis.Evidence = append(analysis.Evidence, "pyproject.toml found")
+		installCmd := pythonProjectInstallCommand(installer)
+		analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
+			ID:               "python-install-deps",
+			Title:            "Install Python dependencies",
+			Command:          installCmd,
+			Cwd:              repoPath,
+			Type:             "dependency-install",
+			Importance:       domain.StepRequired,
+			Risk:             domain.RiskMedium,
+			RequiresApproval: true,
+			EvidenceSource:   "manifest",
+			ConfirmedBy:      []string{"pyproject.toml"},
+			Confidence:       0.90,
+			Reason:           fmt.Sprintf("pyproject.toml defines project dependencies. Using %s to install.", installer),
 		})
 	}
 
+	runCmd := runner
 	if util.FileExists(filepath.Join(repoPath, "main.py")) {
 		analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
 			ID:               "python-main",
 			Title:            "Run main.py",
-			Command:          "python main.py",
+			Command:          runCmd + " main.py",
 			Cwd:              repoPath,
 			Type:             "run",
 			Importance:       domain.StepRecommended,
@@ -325,7 +336,7 @@ func (a *RepositoryAnalyzer) analyzePythonProject(repoPath string) domain.Reposi
 		analysis.Steps = append(analysis.Steps, domain.ExecutionStep{
 			ID:               "python-app",
 			Title:            "Run app.py",
-			Command:          "python app.py",
+			Command:          runCmd + " app.py",
 			Cwd:              repoPath,
 			Type:             "run",
 			Importance:       domain.StepRecommended,
@@ -369,4 +380,92 @@ var workspaceSuffixPattern = regexp.MustCompile(`-[a-f0-9]{8}$`)
 func inferProjectName(repoPath string) string {
 	name := filepath.Base(repoPath)
 	return workspaceSuffixPattern.ReplaceAllString(name, "")
+}
+
+// resolveNodeManager picks the right Node package manager.
+// Step 1: If a lockfile exists, use the matching tool.
+// Step 2: If no lockfile, check what user has installed, prioritize bun > pnpm > npm.
+func resolveNodeManager(repoPath string, env domain.EnvironmentReport) (string, string) {
+	lockfiles := []struct {
+		file    string
+		manager string
+	}{
+		{"bun.lock", "bun"},
+		{"bun.lockb", "bun"},
+		{"pnpm-lock.yaml", "pnpm"},
+		{"yarn.lock", "yarn"},
+		{"package-lock.json", "npm"},
+	}
+
+	for _, entry := range lockfiles {
+		if util.FileExists(filepath.Join(repoPath, entry.file)) {
+			return entry.manager, fmt.Sprintf("%s found — using %s as package manager", entry.file, entry.manager)
+		}
+	}
+
+	priority := []string{"bun", "pnpm", "npm"}
+	for _, candidate := range priority {
+		for _, tool := range env.Tools {
+			if tool.Name == candidate && tool.Available {
+				return candidate, fmt.Sprintf("No lockfile found — using %s (best available on machine)", candidate)
+			}
+		}
+	}
+
+	return "npm", "No lockfile found and no package manager detected — defaulting to npm"
+}
+
+// resolvePythonTools picks the right Python installer and runner.
+// Step 1: If a lockfile exists, use the matching tool.
+// Step 2: If no lockfile, check what user has installed, prioritize uv > pip.
+func resolvePythonTools(repoPath string, env domain.EnvironmentReport) (string, string, string) {
+	if util.FileExists(filepath.Join(repoPath, "uv.lock")) {
+		return "uv", "uv run", "uv.lock found — using uv as package manager"
+	}
+	if util.FileExists(filepath.Join(repoPath, "poetry.lock")) {
+		return "poetry", "poetry run python", "poetry.lock found — using poetry as package manager"
+	}
+	if util.FileExists(filepath.Join(repoPath, "Pipfile.lock")) {
+		return "pipenv", "pipenv run python", "Pipfile.lock found — using pipenv as package manager"
+	}
+
+	priority := []string{"uv", "pip"}
+	for _, candidate := range priority {
+		for _, tool := range env.Tools {
+			if tool.Name == candidate && tool.Available {
+				if candidate == "uv" {
+					return "uv", "uv run", "No Python lockfile found — using uv (best available on machine)"
+				}
+				return "pip", "python", "No Python lockfile found — using pip (best available on machine)"
+			}
+		}
+	}
+
+	return "pip", "python", "No Python lockfile found and no installer detected — defaulting to pip"
+}
+
+func pythonInstallCommand(installer, runner string) string {
+	switch installer {
+	case "uv":
+		return "uv pip install -r requirements.txt"
+	case "poetry":
+		return "poetry install"
+	case "pipenv":
+		return "pipenv install"
+	default:
+		return "python -m pip install -r requirements.txt"
+	}
+}
+
+func pythonProjectInstallCommand(installer string) string {
+	switch installer {
+	case "uv":
+		return "uv pip install -e ."
+	case "poetry":
+		return "poetry install"
+	case "pipenv":
+		return "pipenv install"
+	default:
+		return "python -m pip install -e ."
+	}
 }

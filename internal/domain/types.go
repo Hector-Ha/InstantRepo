@@ -110,6 +110,7 @@ type EnvVarRequirement struct {
 	CurrentStatus  string   `json:"currentStatus"`
 	FillStrategy   string   `json:"fillStrategy"`
 	Service        string   `json:"service,omitempty"`
+	TargetDir      string   `json:"targetDir,omitempty"`
 	SuggestedValue string   `json:"suggestedValue,omitempty"`
 	Instructions   []string `json:"instructions,omitempty"`
 }

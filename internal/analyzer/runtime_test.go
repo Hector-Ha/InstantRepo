@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"instantrepo/internal/domain"
 )
 
 func TestAnalyzeDetectsEnvTemplateAndLocalServices(t *testing.T) {
@@ -18,7 +20,7 @@ func TestAnalyzeDetectsEnvTemplateAndLocalServices(t *testing.T) {
 	writeFile(t, filepath.Join(repoPath, ".env.example"), "DATABASE_URL=\nOPENAI_API_KEY=\n")
 	writeFile(t, filepath.Join(repoPath, "docker-compose.yml"), "services:\n  postgres:\n    image: postgres:16\n")
 
-	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath)
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}
@@ -75,7 +77,7 @@ func TestAnalyzeDetectsExternalMongoRequirement(t *testing.T) {
 	writeFile(t, filepath.Join(repoPath, "requirements.txt"), "flask\n")
 	writeFile(t, filepath.Join(repoPath, ".env.example"), "MONGODB_URI=mongodb+srv://cluster.example.mongodb.net/app\n")
 
-	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath)
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}
