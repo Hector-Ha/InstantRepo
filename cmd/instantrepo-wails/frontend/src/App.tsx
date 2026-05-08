@@ -14,6 +14,7 @@ import type {
   ExecutionStep,
   StepStatus,
 } from "./types";
+import { redactLikelySecrets } from "./redaction";
 
 const initialRepoUrl = "https://github.com/example/instantrepo-demo";
 const initialFolder = "C:\\Users\\Admin\\Desktop\\Workspaces";
@@ -254,7 +255,7 @@ export default function App() {
       }),
       tone,
       label,
-      message,
+      message: redactLikelySecrets(message),
     };
 
     setActivity((current) => [next, ...current].slice(0, 6));
@@ -456,7 +457,11 @@ export default function App() {
     setErrorMessage(null);
     setBusyLabel(`Running ${selectedStep.title}...`);
     setStepStates((current) => ({ ...current, [selectedStep.id]: "running" }));
-    appendActivity("info", "Step Started", selectedStep.command);
+    appendActivity(
+      "info",
+      "Step Started",
+      redactLikelySecrets(selectedStep.command),
+    );
 
     try {
       const response = (await ExecuteStep(

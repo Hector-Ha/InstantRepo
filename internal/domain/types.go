@@ -83,6 +83,44 @@ const (
 	InstalledRepoStatusAnalyzed = "analyzed"
 )
 
+type SetupSession struct {
+	ID              int64     `json:"id"`
+	InstalledRepoID int64     `json:"installedRepoId"`
+	RepoPath        string    `json:"repoPath"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+const (
+	SetupSessionStatusRunning   = "running"
+	SetupSessionStatusSucceeded = "succeeded"
+	SetupSessionStatusFailed    = "failed"
+)
+
+type StepRun struct {
+	ID             int64     `json:"id"`
+	SetupSessionID int64     `json:"setupSessionId"`
+	StepID         string    `json:"stepId"`
+	Title          string    `json:"title"`
+	CommandHash    string    `json:"commandHash"`
+	CommandPreview string    `json:"commandPreview"`
+	Cwd            string    `json:"cwd"`
+	Status         string    `json:"status"`
+	ExitCode       int       `json:"exitCode"`
+	Duration       string    `json:"duration"`
+	LogPath        string    `json:"logPath,omitempty"`
+	StartedAt      time.Time `json:"startedAt"`
+	FinishedAt     time.Time `json:"finishedAt"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+const (
+	StepRunStatusSucceeded = "succeeded"
+	StepRunStatusFailed    = "failed"
+)
+
 type ExecuteResponse struct {
 	Source      RepoSource         `json:"source"`
 	Analysis    RepositoryAnalysis `json:"analysis"`

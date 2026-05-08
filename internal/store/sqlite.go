@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"instantrepo/internal/domain"
@@ -14,10 +15,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
+const maxSetupSessionsPerRepo = 10
+
+const setupLogRetention = 7 * 24 * time.Hour
 
 type SQLiteStore struct {
-	db *sql.DB
+	db     *sql.DB
+	logDir string
 }
 
 func DefaultDatabasePath() (string, error) {
@@ -49,7 +54,10 @@ func OpenSQLiteStore(path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
 
-	store := &SQLiteStore{db: db}
+	store := &SQLiteStore{
+		db:     db,
+		logDir: filepath.Join(filepath.Dir(path), "setup-logs"),
+	}
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -200,6 +208,286 @@ WHERE normalized_url = ?;
 	return repo, nil
 }
 
+func (s *SQLiteStore) StartSetupSession(ctx context.Context, installedRepoID int64, repoPath string) (domain.SetupSession, error) {
+	if repoPath == "" {
+		return domain.SetupSession{}, fmt.Errorf("repo path is required")
+	}
+
+	now := time.Now().UTC()
+	row := s.db.QueryRowContext(ctx, `
+INSERT INTO setup_sessions (
+	installed_repo_id,
+	repo_path,
+	status,
+	created_at,
+	updated_at
+) VALUES (?, ?, ?, ?, ?)
+RETURNING id, installed_repo_id, repo_path, status, created_at, updated_at;
+`,
+		installedRepoID,
+		repoPath,
+		domain.SetupSessionStatusRunning,
+		formatTime(now),
+		formatTime(now),
+	)
+
+	session, err := scanSetupSession(row)
+	if err != nil {
+		return domain.SetupSession{}, fmt.Errorf("insert setup session: %w", err)
+	}
+	return session, nil
+}
+
+func (s *SQLiteStore) RecordStepRun(ctx context.Context, run domain.StepRun, logContent string) (domain.StepRun, error) {
+	if run.SetupSessionID == 0 {
+		return domain.StepRun{}, fmt.Errorf("setup session ID is required")
+	}
+	if run.StepID == "" {
+		return domain.StepRun{}, fmt.Errorf("step ID is required")
+	}
+	if run.Status == "" {
+		return domain.StepRun{}, fmt.Errorf("step run status is required")
+	}
+
+	logPath := ""
+	if logContent != "" {
+		var err error
+		logPath, err = s.writeStepLog(run.SetupSessionID, run.StepID, logContent)
+		if err != nil {
+			return domain.StepRun{}, err
+		}
+	}
+
+	now := time.Now().UTC()
+	row := s.db.QueryRowContext(ctx, `
+INSERT INTO step_runs (
+	setup_session_id,
+	step_id,
+	title,
+	command,
+	command_hash,
+	command_preview,
+	cwd,
+	status,
+	exit_code,
+	log_path,
+	duration,
+	started_at,
+	finished_at,
+	created_at,
+	updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, log_path, created_at, updated_at;
+`,
+		run.SetupSessionID,
+		run.StepID,
+		run.Title,
+		run.CommandPreview,
+		run.CommandHash,
+		run.CommandPreview,
+		run.Cwd,
+		run.Status,
+		run.ExitCode,
+		nullString(logPath),
+		run.Duration,
+		formatTime(run.StartedAt),
+		formatTime(run.FinishedAt),
+		formatTime(now),
+		formatTime(now),
+	)
+
+	var saved domain.StepRun
+	var savedLogPath sql.NullString
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(&saved.ID, &savedLogPath, &createdAt, &updatedAt); err != nil {
+		return domain.StepRun{}, fmt.Errorf("insert step run: %w", err)
+	}
+	run.ID = saved.ID
+	run.LogPath = savedLogPath.String
+	var err error
+	if run.CreatedAt, err = parseTime(createdAt); err != nil {
+		return domain.StepRun{}, fmt.Errorf("parse step run created_at: %w", err)
+	}
+	if run.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return domain.StepRun{}, fmt.Errorf("parse step run updated_at: %w", err)
+	}
+
+	if err := s.updateSetupSessionStatus(ctx, run.SetupSessionID, run.Status, now); err != nil {
+		return domain.StepRun{}, err
+	}
+	return run, nil
+}
+
+func (s *SQLiteStore) CleanupSetupSessionRetention(ctx context.Context, now time.Time) error {
+	sessions, err := s.setupSessionsForRetention(ctx)
+	if err != nil {
+		return err
+	}
+
+	cutoff := now.UTC().Add(-setupLogRetention)
+	keptByRepo := map[string]int{}
+	deleteIDs := map[int64]bool{}
+	for _, session := range sessions {
+		if session.createdAt.Before(cutoff) {
+			deleteIDs[session.id] = true
+			continue
+		}
+
+		keptByRepo[session.repoKey]++
+		if keptByRepo[session.repoKey] > maxSetupSessionsPerRepo {
+			deleteIDs[session.id] = true
+		}
+	}
+	if len(deleteIDs) == 0 {
+		return nil
+	}
+
+	logPaths, err := s.logPathsForSessions(ctx, deleteIDs)
+	if err != nil {
+		return err
+	}
+	for _, logPath := range logPaths {
+		if err := os.Remove(logPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("delete setup log %s: %w", logPath, err)
+		}
+		_ = os.Remove(filepath.Dir(logPath))
+	}
+	if err := s.deleteSetupSessions(ctx, deleteIDs); err != nil {
+		return err
+	}
+	return nil
+}
+
+type setupSessionRetentionRow struct {
+	id        int64
+	repoKey   string
+	createdAt time.Time
+}
+
+func (s *SQLiteStore) setupSessionsForRetention(ctx context.Context) ([]setupSessionRetentionRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, installed_repo_id, repo_path, created_at
+FROM setup_sessions
+ORDER BY created_at DESC, id DESC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query setup sessions for retention: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []setupSessionRetentionRow
+	for rows.Next() {
+		var id int64
+		var installedRepoID sql.NullInt64
+		var repoPath string
+		var createdAtRaw string
+		if err := rows.Scan(&id, &installedRepoID, &repoPath, &createdAtRaw); err != nil {
+			return nil, fmt.Errorf("scan setup session for retention: %w", err)
+		}
+		createdAt, err := parseTime(createdAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse setup session created_at: %w", err)
+		}
+		repoKey := "path:" + repoPath
+		if installedRepoID.Valid && installedRepoID.Int64 > 0 {
+			repoKey = fmt.Sprintf("repo:%d", installedRepoID.Int64)
+		}
+		sessions = append(sessions, setupSessionRetentionRow{
+			id:        id,
+			repoKey:   repoKey,
+			createdAt: createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read setup sessions for retention: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *SQLiteStore) logPathsForSessions(ctx context.Context, sessionIDs map[int64]bool) ([]string, error) {
+	var paths []string
+	for sessionID := range sessionIDs {
+		rows, err := s.db.QueryContext(ctx, `
+SELECT log_path
+FROM step_runs
+WHERE setup_session_id = ?
+	AND log_path IS NOT NULL
+	AND log_path != '';
+`, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("query setup logs for session %d: %w", sessionID, err)
+		}
+		for rows.Next() {
+			var logPath string
+			if err := rows.Scan(&logPath); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan setup log path: %w", err)
+			}
+			paths = append(paths, logPath)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read setup log paths: %w", err)
+		}
+		rows.Close()
+	}
+	return paths, nil
+}
+
+func (s *SQLiteStore) deleteSetupSessions(ctx context.Context, sessionIDs map[int64]bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin setup session cleanup: %w", err)
+	}
+	defer tx.Rollback()
+
+	for sessionID := range sessionIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM step_runs WHERE setup_session_id = ?;`, sessionID); err != nil {
+			return fmt.Errorf("delete step runs for setup session %d: %w", sessionID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM setup_sessions WHERE id = ?;`, sessionID); err != nil {
+			return fmt.Errorf("delete setup session %d: %w", sessionID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit setup session cleanup: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) writeStepLog(setupSessionID int64, stepID, logContent string) (string, error) {
+	if s.logDir == "" {
+		return "", fmt.Errorf("setup log directory is not configured")
+	}
+
+	sessionDir := filepath.Join(s.logDir, fmt.Sprintf("session-%d", setupSessionID))
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return "", fmt.Errorf("create setup log directory: %w", err)
+	}
+
+	logPath := filepath.Join(sessionDir, fmt.Sprintf("%d-%s.log", time.Now().UTC().UnixNano(), sanitizeLogName(stepID)))
+	if err := os.WriteFile(logPath, []byte(logContent), 0o600); err != nil {
+		return "", fmt.Errorf("write setup step log: %w", err)
+	}
+	return logPath, nil
+}
+
+func (s *SQLiteStore) updateSetupSessionStatus(ctx context.Context, setupSessionID int64, stepStatus string, now time.Time) error {
+	status := domain.SetupSessionStatusSucceeded
+	if stepStatus == domain.StepRunStatusFailed {
+		status = domain.SetupSessionStatusFailed
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE setup_sessions
+SET status = ?, updated_at = ?
+WHERE id = ?;
+`, status, formatTime(now), setupSessionID); err != nil {
+		return fmt.Errorf("update setup session status: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -241,10 +529,13 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			step_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			command TEXT NOT NULL,
+			command_hash TEXT NOT NULL DEFAULT '',
+			command_preview TEXT NOT NULL DEFAULT '',
 			cwd TEXT NOT NULL,
 			status TEXT NOT NULL,
 			exit_code INTEGER,
 			log_path TEXT,
+			duration TEXT NOT NULL DEFAULT '',
 			started_at TEXT,
 			finished_at TEXT,
 			created_at TEXT NOT NULL,
@@ -263,6 +554,22 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		}
 	}
 
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "command_hash", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "command_preview", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "duration", definition: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := ensureColumn(ctx, tx, "step_runs", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`); err != nil {
+		return fmt.Errorf("record migration 2: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
 	}
@@ -270,6 +577,10 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 }
 
 type installedRepoScanner interface {
+	Scan(dest ...any) error
+}
+
+type setupSessionScanner interface {
 	Scan(dest ...any) error
 }
 
@@ -324,4 +635,101 @@ func formatTime(value time.Time) string {
 
 func parseTime(value string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, value)
+}
+
+func scanSetupSession(row setupSessionScanner) (domain.SetupSession, error) {
+	var session domain.SetupSession
+	var installedRepoID sql.NullInt64
+	var createdAt string
+	var updatedAt string
+
+	if err := row.Scan(
+		&session.ID,
+		&installedRepoID,
+		&session.RepoPath,
+		&session.Status,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return domain.SetupSession{}, err
+	}
+
+	session.InstalledRepoID = installedRepoID.Int64
+	var err error
+	if session.CreatedAt, err = parseTime(createdAt); err != nil {
+		return domain.SetupSession{}, fmt.Errorf("parse created_at: %w", err)
+	}
+	if session.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return domain.SetupSession{}, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return session, nil
+}
+
+func ensureColumn(ctx context.Context, tx *sql.Tx, tableName, columnName, definition string) error {
+	exists, err := columnExists(ctx, tx, tableName, columnName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", tableName, columnName, definition)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", tableName, columnName, err)
+	}
+	return nil
+}
+
+func columnExists(ctx context.Context, tx *sql.Tx, tableName, columnName string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", tableName))
+	if err != nil {
+		return false, fmt.Errorf("inspect table %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan table %s column: %w", tableName, err)
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("read table %s columns: %w", tableName, err)
+	}
+	return false, nil
+}
+
+func sanitizeLogName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "step"
+	}
+
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-' || r == '_':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	result := strings.Trim(builder.String(), "-")
+	if result == "" {
+		return "step"
+	}
+	return result
 }
