@@ -22,6 +22,52 @@ type AnalyzeResponse struct {
 	Plan        SetupPlan          `json:"plan"`
 }
 
+type ClonePreflightRequest struct {
+	RepoURL         string `json:"repoUrl"`
+	DestinationRoot string `json:"destinationRoot"`
+}
+
+type ClonePreflightResponse struct {
+	RepoURL             string                  `json:"repoUrl"`
+	NormalizedURL       string                  `json:"normalizedUrl"`
+	DestinationRoot     string                  `json:"destinationRoot"`
+	DestinationWritable bool                    `json:"destinationWritable"`
+	TargetPath          string                  `json:"targetPath"`
+	TargetExists        bool                    `json:"targetExists"`
+	TargetEmpty         bool                    `json:"targetEmpty"`
+	DuplicateRepos      []InstalledRepo         `json:"duplicateRepos"`
+	PathConflict        bool                    `json:"pathConflict"`
+	PathConflictRepos   []InstalledRepo         `json:"pathConflictRepos"`
+	Disk                CloneDiskStatus         `json:"disk"`
+	RecommendedAction   string                  `json:"recommendedAction"`
+	Messages            []ClonePreflightMessage `json:"messages"`
+}
+
+type CloneDiskStatus struct {
+	Status    string `json:"status"`
+	FreeBytes uint64 `json:"freeBytes,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type ClonePreflightMessage struct {
+	Severity string `json:"severity"`
+	Text     string `json:"text"`
+}
+
+const (
+	CloneDiskStatusOK    = "ok"
+	CloneDiskStatusWarn  = "warn"
+	CloneDiskStatusBlock = "block"
+)
+
+const (
+	CloneActionClone                 = "clone"
+	CloneActionCloneWithAttention    = "clone-with-attention"
+	CloneActionOpenExisting          = "open-existing"
+	CloneActionChooseDifferentFolder = "choose-different-folder"
+	CloneActionFreeDiskSpace         = "free-disk-space"
+)
+
 type InstalledRepo struct {
 	ID             int64     `json:"id"`
 	RawURL         string    `json:"rawUrl,omitempty"`

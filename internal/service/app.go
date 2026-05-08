@@ -22,10 +22,16 @@ type AppService struct {
 	executor       *Executor
 	envFiles       *EnvFileManager
 	installedRepos InstalledRepoStore
+	disk           DiskChecker
 }
 
 type InstalledRepoStore interface {
 	SaveInstalledRepo(ctx context.Context, repo domain.InstalledRepo) (domain.InstalledRepo, error)
+}
+
+type InstalledRepoLookup interface {
+	InstalledRepoByNormalizedURL(ctx context.Context, normalizedURL string) (domain.InstalledRepo, error)
+	InstalledRepoByLocalPath(ctx context.Context, localPath string) (domain.InstalledRepo, error)
 }
 
 func NewAppService() *AppService {
@@ -45,6 +51,7 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 		executor:       NewExecutor(),
 		envFiles:       NewEnvFileManager(),
 		installedRepos: installedRepos,
+		disk:           osDiskChecker{},
 	}
 }
 
@@ -308,6 +315,7 @@ func inferRepoSourceType(repoURL string) string {
 
 func normalizeRepoURL(repoURL string) string {
 	normalized := strings.ToLower(strings.TrimSpace(repoURL))
+	normalized = strings.TrimRight(normalized, "/")
 	normalized = strings.TrimSuffix(normalized, ".git")
 	normalized = strings.TrimRight(normalized, "/")
 	return normalized

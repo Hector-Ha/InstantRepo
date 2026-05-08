@@ -189,3 +189,37 @@ func TestSQLiteStoreUpdatesLocalOnlyRepoWhenURLBecomesKnown(t *testing.T) {
 		t.Fatalf("expected normalized URL to be stored, got %q", second.NormalizedURL)
 	}
 }
+
+func TestSQLiteStoreFindsInstalledRepoByNormalizedURL(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "instantrepo.db")
+
+	store, err := OpenSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	saved, err := store.SaveInstalledRepo(ctx, domain.InstalledRepo{
+		RawURL:         "https://github.com/Example/InstantRepo.git",
+		NormalizedURL:  "https://github.com/example/instantrepo",
+		LocalPath:      filepath.Join(t.TempDir(), "InstantRepo"),
+		Status:         domain.InstalledRepoStatusAnalyzed,
+		LastAnalyzedAt: time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("SaveInstalledRepo returned error: %v", err)
+	}
+
+	got, err := store.InstalledRepoByNormalizedURL(ctx, "https://github.com/example/instantrepo")
+	if err != nil {
+		t.Fatalf("InstalledRepoByNormalizedURL returned error: %v", err)
+	}
+
+	if got.ID != saved.ID {
+		t.Fatalf("expected ID %d, got %d", saved.ID, got.ID)
+	}
+	if got.LocalPath != saved.LocalPath {
+		t.Fatalf("expected local path %q, got %q", saved.LocalPath, got.LocalPath)
+	}
+}

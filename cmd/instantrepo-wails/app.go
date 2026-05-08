@@ -41,6 +41,13 @@ func (a *App) ImportRepository(repoURL, destinationRoot string) (domain.AnalyzeR
 	return a.service.ImportRepository(a.appContext(), repoURL, destinationRoot)
 }
 
+func (a *App) ClonePreflight(repoURL, destinationRoot string) (domain.ClonePreflightResponse, error) {
+	return a.service.ClonePreflight(a.appContext(), domain.ClonePreflightRequest{
+		RepoURL:         repoURL,
+		DestinationRoot: destinationRoot,
+	})
+}
+
 func (a *App) GenerateEnvDraft(localPath string) (string, error) {
 	return a.service.PreviewEnv(a.appContext(), localPath)
 }

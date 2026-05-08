@@ -186,6 +186,20 @@ WHERE local_path = ?;
 	return repo, nil
 }
 
+func (s *SQLiteStore) InstalledRepoByNormalizedURL(ctx context.Context, normalizedURL string) (domain.InstalledRepo, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at
+FROM installed_repos
+WHERE normalized_url = ?;
+`, normalizedURL)
+
+	repo, err := scanInstalledRepo(row)
+	if err != nil {
+		return domain.InstalledRepo{}, fmt.Errorf("find installed repo by normalized URL: %w", err)
+	}
+	return repo, nil
+}
+
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
