@@ -15,6 +15,13 @@ import type {
   StepStatus,
 } from "./types";
 import { redactLikelySecrets } from "./redaction";
+import {
+  clonePreflight,
+  planClonePreflightFlow,
+  summarizePreflightMessages,
+  type ClonePreflightPlan,
+  type ClonePreflightResponse,
+} from "./clonePreflight";
 
 const initialRepoUrl = "https://github.com/example/instantrepo-demo";
 const initialFolder = "C:\\Users\\Admin\\Desktop\\Workspaces";
@@ -142,6 +149,17 @@ function isExecutableStep(step: ExecutionStep) {
     !command.startsWith("manual ") &&
     !step.type.includes("review")
   );
+}
+
+function buildCloneConfirmationMessage(preflight: ClonePreflightResponse) {
+  return `Clone with attention?\n\n${summarizePreflightMessages(preflight)}\n\nContinue cloning into:\n${preflight.targetPath}`;
+}
+
+function buildDuplicateConfirmationMessage(
+  preflight: ClonePreflightResponse,
+  plan: Extract<ClonePreflightPlan, { kind: "open-existing" }>,
+) {
+  return `Existing clone found:\n${plan.localPath}\n\nOpen existing clone? Choose Cancel to clone another copy into:\n${preflight.targetPath}`;
 }
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
@@ -312,11 +330,14 @@ export default function App() {
     setErrorMessage(null);
 
     try {
+      const cleanRepoUrl = repoUrl.trim();
+      const cleanFolderPath = folderPath.trim();
+
       if (mode === "clone") {
-        if (repoUrl.trim() === "") {
+        if (cleanRepoUrl === "") {
           throw new Error("Repository URL is required before cloning.");
         }
-        if (folderPath.trim() === "") {
+        if (cleanFolderPath === "") {
           throw new Error("Choose a destination folder before cloning.");
         }
       }
@@ -327,30 +348,71 @@ export default function App() {
 
       setBusyLabel(
         mode === "clone"
-          ? "Cloning and analyzing repository..."
+          ? "Checking clone destination..."
           : mode === "local"
             ? "Analyzing existing folder..."
             : "Refreshing analysis...",
       );
 
-      const response =
+      let response: AnalyzeSnapshot;
+      let successLabel =
         mode === "clone"
-          ? await ImportRepository(repoUrl.trim(), folderPath.trim())
-          : await AnalyzeRepository(
-              "",
-              mode === "refresh" ? activeLocalPath : folderPath.trim(),
-            );
+          ? "Clone Complete"
+          : mode === "local"
+            ? "Folder Loaded"
+            : "Analysis Refreshed";
+
+      if (mode === "clone") {
+        const preflight = await clonePreflight(cleanRepoUrl, cleanFolderPath);
+        const plan = planClonePreflightFlow(preflight);
+
+        if (plan.kind === "block") {
+          setErrorMessage(plan.message);
+          appendActivity("critical", "Clone Blocked", plan.message);
+          return;
+        }
+
+        if (plan.kind === "open-existing") {
+          appendActivity("warning", "Existing Clone Found", plan.message);
+          if (window.confirm(buildDuplicateConfirmationMessage(preflight, plan))) {
+            setBusyLabel("Opening existing clone...");
+            response = await AnalyzeRepository("", plan.localPath);
+            successLabel = "Existing Clone Opened";
+          } else {
+            const forcedPlan = planClonePreflightFlow(preflight, {
+              forceClone: true,
+            });
+            appendActivity("warning", "Clone Another Copy", forcedPlan.message);
+            setBusyLabel("Cloning and analyzing repository...");
+            response = await ImportRepository(cleanRepoUrl, cleanFolderPath);
+          }
+        } else if (plan.kind === "confirm-clone") {
+          appendActivity("warning", "Clone Needs Attention", plan.message);
+          if (!window.confirm(buildCloneConfirmationMessage(preflight))) {
+            setErrorMessage("Clone cancelled after preflight.");
+            appendActivity("warning", "Clone Cancelled", plan.message);
+            return;
+          }
+          setBusyLabel("Cloning and analyzing repository...");
+          response = await ImportRepository(cleanRepoUrl, cleanFolderPath);
+        } else {
+          appendActivity("info", "Clone Preflight", plan.message);
+          setBusyLabel("Cloning and analyzing repository...");
+          response = await ImportRepository(cleanRepoUrl, cleanFolderPath);
+        }
+      } else {
+        response = await AnalyzeRepository(
+          "",
+          mode === "refresh" ? activeLocalPath : cleanFolderPath,
+        );
+      }
 
       const draft = await loadEnvDraft(response.source.path, response);
       syncSnapshot(response, draft);
 
       appendActivity(
         "success",
-        mode === "clone"
-          ? "Clone Complete"
-          : mode === "local"
-            ? "Folder Loaded"
-            : "Analysis Refreshed",
+        successLabel,
         `${response.analysis.projectName} is ready at ${response.source.path}.`,
       );
     } catch (error) {
