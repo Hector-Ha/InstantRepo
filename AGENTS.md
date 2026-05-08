@@ -12,6 +12,20 @@ InstantRepo be Go + Wails app. It helps user set up local repos.
 - Frontend: React + Vite + TypeScript in `cmd/instantrepo-wails/frontend`.
 - Tests: Go tests beside code, plus manual plan in `test/TEST_PLAN.md`.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `Hector-Ha/InstantRepo`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: root `CONTEXT.md`, future ADRs in `docs/adr/`. See `docs/agents/domain.md`.
+
 ## Package Manager
 
 - Bun good. Use `bun`.
