@@ -11,25 +11,40 @@ import (
 	"instantrepo/internal/analyzer"
 	"instantrepo/internal/detector"
 	"instantrepo/internal/domain"
+	"instantrepo/internal/store"
 )
 
 type AppService struct {
-	fetcher  *RepoFetcher
-	analyzer *analyzer.RepositoryAnalyzer
-	detector *detector.EnvironmentDetector
-	planner  *Planner
-	executor *Executor
-	envFiles *EnvFileManager
+	fetcher        *RepoFetcher
+	analyzer       *analyzer.RepositoryAnalyzer
+	detector       *detector.EnvironmentDetector
+	planner        *Planner
+	executor       *Executor
+	envFiles       *EnvFileManager
+	installedRepos InstalledRepoStore
+}
+
+type InstalledRepoStore interface {
+	SaveInstalledRepo(ctx context.Context, repo domain.InstalledRepo) (domain.InstalledRepo, error)
 }
 
 func NewAppService() *AppService {
+	installedRepos, err := store.OpenDefaultSQLiteStore()
+	if err != nil {
+		return NewAppServiceWithInstalledRepoStore(nil)
+	}
+	return NewAppServiceWithInstalledRepoStore(installedRepos)
+}
+
+func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *AppService {
 	return &AppService{
-		fetcher:  NewRepoFetcher(),
-		analyzer: analyzer.NewRepositoryAnalyzer(),
-		detector: detector.NewEnvironmentDetector(),
-		planner:  NewPlanner(),
-		executor: NewExecutor(),
-		envFiles: NewEnvFileManager(),
+		fetcher:        NewRepoFetcher(),
+		analyzer:       analyzer.NewRepositoryAnalyzer(),
+		detector:       detector.NewEnvironmentDetector(),
+		planner:        NewPlanner(),
+		executor:       NewExecutor(),
+		envFiles:       NewEnvFileManager(),
+		installedRepos: installedRepos,
 	}
 }
 
@@ -45,13 +60,16 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 	sourceType := "local"
 	cleanup := func() {}
 
+	if req.RepoURL != "" {
+		sourceType = inferRepoSourceType(req.RepoURL)
+	}
+
 	if req.RepoURL != "" && req.LocalPath == "" {
 		clonedPath, release, err := s.fetcher.Clone(ctx, req.RepoURL)
 		if err != nil {
 			return domain.AnalyzeResponse{}, err
 		}
 		repoPath = clonedPath
-		sourceType = inferRepoSourceType(req.RepoURL)
 		cleanup = release
 	}
 	defer cleanup()
@@ -74,6 +92,10 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 
 	plan := s.planner.BuildPlan(analysis, environment)
 
+	if err := s.persistAnalyzedRepo(ctx, req.RepoURL, absPath); err != nil {
+		return domain.AnalyzeResponse{}, err
+	}
+
 	return domain.AnalyzeResponse{
 		Source: domain.RepoSource{
 			Type:    sourceType,
@@ -84,6 +106,25 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 		Environment: environment,
 		Plan:        plan,
 	}, nil
+}
+
+func (s *AppService) persistAnalyzedRepo(ctx context.Context, repoURL, localPath string) error {
+	if s.installedRepos == nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	_, err := s.installedRepos.SaveInstalledRepo(ctx, domain.InstalledRepo{
+		RawURL:         repoURL,
+		NormalizedURL:  normalizeRepoURL(repoURL),
+		LocalPath:      localPath,
+		Status:         domain.InstalledRepoStatusAnalyzed,
+		LastAnalyzedAt: now,
+	})
+	if err != nil {
+		return fmt.Errorf("save installed repo: %w", err)
+	}
+	return nil
 }
 
 func (s *AppService) ImportRepository(ctx context.Context, repoURL, destinationRoot string) (domain.AnalyzeResponse, error) {
@@ -99,7 +140,7 @@ func (s *AppService) ImportRepository(ctx context.Context, repoURL, destinationR
 		return domain.AnalyzeResponse{}, err
 	}
 
-	resp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: clonedPath})
+	resp, err := s.Analyze(ctx, domain.AnalyzeRequest{RepoURL: repoURL, LocalPath: clonedPath})
 	if err != nil {
 		return domain.AnalyzeResponse{}, err
 	}
@@ -263,4 +304,11 @@ func inferRepoSourceType(repoURL string) string {
 	default:
 		return "git"
 	}
+}
+
+func normalizeRepoURL(repoURL string) string {
+	normalized := strings.ToLower(strings.TrimSpace(repoURL))
+	normalized = strings.TrimSuffix(normalized, ".git")
+	normalized = strings.TrimRight(normalized, "/")
+	return normalized
 }

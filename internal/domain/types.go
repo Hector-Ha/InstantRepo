@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type AnalyzeRequest struct {
 	RepoURL   string `json:"repoUrl,omitempty"`
 	LocalPath string `json:"localPath,omitempty"`
@@ -19,6 +21,21 @@ type AnalyzeResponse struct {
 	Environment EnvironmentReport  `json:"environment"`
 	Plan        SetupPlan          `json:"plan"`
 }
+
+type InstalledRepo struct {
+	ID             int64     `json:"id"`
+	RawURL         string    `json:"rawUrl,omitempty"`
+	NormalizedURL  string    `json:"normalizedUrl,omitempty"`
+	LocalPath      string    `json:"localPath"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+	LastAnalyzedAt time.Time `json:"lastAnalyzedAt"`
+}
+
+const (
+	InstalledRepoStatusAnalyzed = "analyzed"
+)
 
 type ExecuteResponse struct {
 	Source      RepoSource         `json:"source"`
