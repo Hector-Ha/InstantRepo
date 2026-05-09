@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"runtime"
@@ -11,6 +12,8 @@ import (
 )
 
 const versionCommandTimeout = time.Second
+
+var lookPath = exec.LookPath
 
 type EnvironmentDetector struct{}
 
@@ -41,7 +44,7 @@ func (d *EnvironmentDetector) Detect() domain.EnvironmentReport {
 }
 
 func (d *EnvironmentDetector) detectTool(name string, versionArgs []string) domain.DetectedTool {
-	path, err := exec.LookPath(name)
+	path, err := lookupToolPath(name)
 	if err != nil {
 		return domain.DetectedTool{Name: name, Available: false}
 	}
@@ -77,17 +80,56 @@ func (d *EnvironmentDetector) detectPip() domain.DetectedTool {
 	return domain.DetectedTool{Name: "pip", Available: false}
 }
 
-func runVersionCommand(binary string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), versionCommandTimeout)
-	defer cancel()
+func lookupToolPath(name string) (string, error) {
+	type lookupResult struct {
+		path string
+		err  error
+	}
 
-	cmd := exec.CommandContext(ctx, binary, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+	result := make(chan lookupResult, 1)
+	go func() {
+		path, err := lookPath(name)
+		result <- lookupResult{path: path, err: err}
+	}()
+
+	select {
+	case found := <-result:
+		return found.path, found.err
+	case <-time.After(versionCommandTimeout):
+		return "", context.DeadlineExceeded
+	}
+}
+
+func runVersionCommand(binary string, args ...string) string {
+	cmd := exec.Command(binary, args...)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
 		return ""
 	}
 
-	line := strings.TrimSpace(string(output))
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	timer := time.NewTimer(versionCommandTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return ""
+		}
+	case <-timer.C:
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return ""
+	}
+
+	line := strings.TrimSpace(output.String())
 	line = strings.ReplaceAll(line, "\r\n", "\n")
 	if idx := strings.Index(line, "\n"); idx >= 0 {
 		line = line[:idx]
