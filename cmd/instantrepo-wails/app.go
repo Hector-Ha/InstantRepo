@@ -56,6 +56,12 @@ func (a *App) SaveEnvFile(localPath, content string) (domain.ExecuteResponse, er
 	return a.service.SaveRawEnv(a.appContext(), localPath, content)
 }
 
+func (a *App) ExportRepoDiagnostics(localPath string) (domain.RepoDiagnosticExport, error) {
+	return a.service.ExportRepoDiagnostics(a.appContext(), domain.RepoDiagnosticExportRequest{
+		LocalPath: localPath,
+	})
+}
+
 func (a *App) ExecuteStep(repoURL, localPath, stepID string, approveRisky bool) (domain.ExecuteResponse, error) {
 	return a.service.Execute(a.appContext(), domain.ExecuteRequest{
 		RepoURL:      repoURL,

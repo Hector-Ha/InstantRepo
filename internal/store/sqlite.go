@@ -194,6 +194,20 @@ WHERE local_path = ?;
 	return repo, nil
 }
 
+func (s *SQLiteStore) InstalledRepoByID(ctx context.Context, id int64) (domain.InstalledRepo, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at
+FROM installed_repos
+WHERE id = ?;
+`, id)
+
+	repo, err := scanInstalledRepo(row)
+	if err != nil {
+		return domain.InstalledRepo{}, fmt.Errorf("find installed repo by ID: %w", err)
+	}
+	return repo, nil
+}
+
 func (s *SQLiteStore) InstalledRepoByNormalizedURL(ctx context.Context, normalizedURL string) (domain.InstalledRepo, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at
@@ -236,6 +250,58 @@ RETURNING id, installed_repo_id, repo_path, status, created_at, updated_at;
 		return domain.SetupSession{}, fmt.Errorf("insert setup session: %w", err)
 	}
 	return session, nil
+}
+
+func (s *SQLiteStore) SetupSessionsByInstalledRepoID(ctx context.Context, installedRepoID int64) ([]domain.SetupSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, installed_repo_id, repo_path, status, created_at, updated_at
+FROM setup_sessions
+WHERE installed_repo_id = ?
+ORDER BY created_at DESC, id DESC;
+`, installedRepoID)
+	if err != nil {
+		return nil, fmt.Errorf("query setup sessions by installed repo ID: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []domain.SetupSession
+	for rows.Next() {
+		session, err := scanSetupSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan setup session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read setup sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *SQLiteStore) StepRunsBySetupSessionID(ctx context.Context, setupSessionID int64) ([]domain.StepRun, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, setup_session_id, step_id, title, command_hash, command_preview, cwd, status, exit_code, duration, log_path, started_at, finished_at, created_at, updated_at
+FROM step_runs
+WHERE setup_session_id = ?
+ORDER BY created_at ASC, id ASC;
+`, setupSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query step runs by setup session ID: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []domain.StepRun
+	for rows.Next() {
+		run, err := scanStepRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan step run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read step runs: %w", err)
+	}
+	return runs, nil
 }
 
 func (s *SQLiteStore) RecordStepRun(ctx context.Context, run domain.StepRun, logContent string) (domain.StepRun, error) {
@@ -584,6 +650,10 @@ type setupSessionScanner interface {
 	Scan(dest ...any) error
 }
 
+type stepRunScanner interface {
+	Scan(dest ...any) error
+}
+
 func scanInstalledRepo(row installedRepoScanner) (domain.InstalledRepo, error) {
 	var repo domain.InstalledRepo
 	var rawURL sql.NullString
@@ -663,6 +733,61 @@ func scanSetupSession(row setupSessionScanner) (domain.SetupSession, error) {
 		return domain.SetupSession{}, fmt.Errorf("parse updated_at: %w", err)
 	}
 	return session, nil
+}
+
+func scanStepRun(row stepRunScanner) (domain.StepRun, error) {
+	var run domain.StepRun
+	var exitCode sql.NullInt64
+	var duration sql.NullString
+	var logPath sql.NullString
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var createdAt string
+	var updatedAt string
+
+	if err := row.Scan(
+		&run.ID,
+		&run.SetupSessionID,
+		&run.StepID,
+		&run.Title,
+		&run.CommandHash,
+		&run.CommandPreview,
+		&run.Cwd,
+		&run.Status,
+		&exitCode,
+		&duration,
+		&logPath,
+		&startedAt,
+		&finishedAt,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return domain.StepRun{}, err
+	}
+
+	run.ExitCode = int(exitCode.Int64)
+	run.Duration = duration.String
+	run.LogPath = logPath.String
+
+	var err error
+	if startedAt.Valid && startedAt.String != "" {
+		if run.StartedAt, err = parseTime(startedAt.String); err != nil {
+			return domain.StepRun{}, fmt.Errorf("parse step run started_at: %w", err)
+		}
+	}
+	if finishedAt.Valid && finishedAt.String != "" {
+		if run.FinishedAt, err = parseTime(finishedAt.String); err != nil {
+			return domain.StepRun{}, fmt.Errorf("parse step run finished_at: %w", err)
+		}
+	}
+	if run.CreatedAt, err = parseTime(createdAt); err != nil {
+		return domain.StepRun{}, fmt.Errorf("parse step run created_at: %w", err)
+	}
+	if run.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return domain.StepRun{}, fmt.Errorf("parse step run updated_at: %w", err)
+	}
+
+	return run, nil
 }
 
 func ensureColumn(ctx context.Context, tx *sql.Tx, tableName, columnName, definition string) error {

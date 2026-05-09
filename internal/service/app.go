@@ -18,7 +18,7 @@ import (
 type AppService struct {
 	fetcher        *RepoFetcher
 	analyzer       *analyzer.RepositoryAnalyzer
-	detector       *detector.EnvironmentDetector
+	detector       EnvironmentDetector
 	planner        *Planner
 	executor       *Executor
 	envFiles       *EnvFileManager
@@ -27,6 +27,10 @@ type AppService struct {
 	setupSessionMu sync.Mutex
 	activeSessions map[string]domain.SetupSession
 	disk           DiskChecker
+}
+
+type EnvironmentDetector interface {
+	Detect() domain.EnvironmentReport
 }
 
 type InstalledRepoStore interface {

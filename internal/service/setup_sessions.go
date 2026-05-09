@@ -17,9 +17,11 @@ const commandPreviewLimit = 160
 var (
 	secretAssignmentPattern = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|CLIENT_SECRET|ACCESS_KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|[^\s]+)`)
 	secretKeyValuePattern   = regexp.MustCompile(`(?i)\b((?:secret|token|password|passwd|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s]+)`)
+	quotedSecretKeyPattern  = regexp.MustCompile(`(?i)(["'][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|CLIENT_SECRET|ACCESS_KEY)[A-Z0-9_]*["']\s*:\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
 	secretFlagPattern       = regexp.MustCompile(`(?i)(--?(?:secret|token|password|api-key|apikey|private-key|client-secret)\s+)([^\s]+)`)
 	bearerTokenPattern      = regexp.MustCompile(`(?i)\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*`)
 	urlCredentialPattern    = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^:\s/@]+:)[^@\s]+@`)
+	bareProviderKeyPattern  = regexp.MustCompile(`\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{6,}|sk_(?:live|test)_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b`)
 )
 
 func (s *AppService) saveInstalledRepoForSetup(ctx context.Context, repoURL, localPath string) (domain.InstalledRepo, error) {
@@ -214,8 +216,10 @@ func RedactLikelySecrets(input string) string {
 
 	redacted := secretAssignmentPattern.ReplaceAllString(input, `${1}=[REDACTED]`)
 	redacted = secretKeyValuePattern.ReplaceAllString(redacted, `${1}[REDACTED]`)
+	redacted = quotedSecretKeyPattern.ReplaceAllString(redacted, `${1}[REDACTED]`)
 	redacted = secretFlagPattern.ReplaceAllString(redacted, `${1}[REDACTED]`)
 	redacted = bearerTokenPattern.ReplaceAllString(redacted, `${1} [REDACTED]`)
 	redacted = urlCredentialPattern.ReplaceAllString(redacted, `${1}[REDACTED]@`)
+	redacted = bareProviderKeyPattern.ReplaceAllString(redacted, `[REDACTED]`)
 	return redacted
 }

@@ -4,7 +4,11 @@ import {domain} from '../models';
 
 export function AnalyzeRepository(arg1:string,arg2:string):Promise<domain.AnalyzeResponse>;
 
+export function ClonePreflight(arg1:string,arg2:string):Promise<domain.ClonePreflightResponse>;
+
 export function ExecuteStep(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<domain.ExecuteResponse>;
+
+export function ExportRepoDiagnostics(arg1:string):Promise<domain.RepoDiagnosticExport>;
 
 export function GenerateEnvDraft(arg1:string):Promise<string>;
 

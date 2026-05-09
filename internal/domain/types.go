@@ -83,6 +83,133 @@ const (
 	InstalledRepoStatusAnalyzed = "analyzed"
 )
 
+type RepoDiagnosticExportRequest struct {
+	InstalledRepoID int64  `json:"installedRepoId,omitempty"`
+	LocalPath       string `json:"localPath,omitempty"`
+}
+
+type RepoDiagnosticExport struct {
+	SchemaVersion string                         `json:"schemaVersion"`
+	GeneratedAt   time.Time                      `json:"generatedAt"`
+	Repo          RepoDiagnosticRepoIdentity     `json:"repo"`
+	App           RepoDiagnosticAppInfo          `json:"app"`
+	Environment   RepoDiagnosticEnvironment      `json:"environment"`
+	Analysis      RepoDiagnosticAnalysisSummary  `json:"analysis"`
+	SetupPlan     RepoDiagnosticSetupPlanSummary `json:"setupPlan"`
+	SetupSessions []RepoDiagnosticSetupSession   `json:"setupSessions"`
+	AIReview      RepoDiagnosticAIReviewMetadata `json:"aiReview"`
+}
+
+type RepoDiagnosticRepoIdentity struct {
+	ID             int64     `json:"id"`
+	RawURL         string    `json:"rawUrl,omitempty"`
+	NormalizedURL  string    `json:"normalizedUrl,omitempty"`
+	LocalPath      string    `json:"localPath"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+	LastAnalyzedAt time.Time `json:"lastAnalyzedAt"`
+}
+
+type RepoDiagnosticAppInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type RepoDiagnosticEnvironment struct {
+	OS    string         `json:"os"`
+	Arch  string         `json:"arch"`
+	Tools []DetectedTool `json:"tools"`
+}
+
+type RepoDiagnosticAnalysisSummary struct {
+	ProjectName  string                 `json:"projectName"`
+	ProjectType  string                 `json:"projectType"`
+	Confidence   float64                `json:"confidence"`
+	Evidence     []string               `json:"evidence"`
+	Requirements []ToolRequirement      `json:"requirements"`
+	EnvVariables []RepoDiagnosticEnvVar `json:"envVariables"`
+	Services     []ServiceDependency    `json:"services"`
+	Unknowns     []string               `json:"unknowns"`
+}
+
+type RepoDiagnosticSetupPlanSummary struct {
+	ProjectName  string                   `json:"projectName"`
+	ProjectType  string                   `json:"projectType"`
+	Confidence   float64                  `json:"confidence"`
+	Evidence     []string                 `json:"evidence"`
+	Gaps         []RequirementGap         `json:"gaps"`
+	EnvVariables []RepoDiagnosticEnvVar   `json:"envVariables"`
+	Services     []ServiceDependency      `json:"services"`
+	Steps        []RepoDiagnosticPlanStep `json:"steps"`
+	Safety       SafetyReport             `json:"safety"`
+	Unknowns     []string                 `json:"unknowns"`
+}
+
+type RepoDiagnosticEnvVar struct {
+	Name          string `json:"name"`
+	Source        string `json:"source"`
+	Required      bool   `json:"required"`
+	Secret        bool   `json:"secret"`
+	CurrentStatus string `json:"currentStatus"`
+	Service       string `json:"service,omitempty"`
+	TargetDir     string `json:"targetDir,omitempty"`
+}
+
+type RepoDiagnosticPlanStep struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	CommandPreview   string  `json:"commandPreview"`
+	Type             string  `json:"type"`
+	Importance       string  `json:"importance"`
+	Risk             string  `json:"risk"`
+	RequiresApproval bool    `json:"requiresApproval"`
+	EvidenceSource   string  `json:"evidenceSource,omitempty"`
+	Confidence       float64 `json:"confidence"`
+	Reason           string  `json:"reason"`
+}
+
+type RepoDiagnosticSetupSession struct {
+	ID              int64                `json:"id"`
+	InstalledRepoID int64                `json:"installedRepoId"`
+	RepoPath        string               `json:"repoPath"`
+	Status          string               `json:"status"`
+	CreatedAt       time.Time            `json:"createdAt"`
+	UpdatedAt       time.Time            `json:"updatedAt"`
+	Steps           []RepoDiagnosticStep `json:"steps"`
+}
+
+type RepoDiagnosticStep struct {
+	ID             int64     `json:"id"`
+	SetupSessionID int64     `json:"setupSessionId"`
+	StepID         string    `json:"stepId"`
+	Title          string    `json:"title"`
+	CommandHash    string    `json:"commandHash"`
+	CommandPreview string    `json:"commandPreview"`
+	Cwd            string    `json:"cwd"`
+	Status         string    `json:"status"`
+	ExitCode       int       `json:"exitCode"`
+	Duration       string    `json:"duration"`
+	Log            string    `json:"log,omitempty"`
+	StartedAt      time.Time `json:"startedAt"`
+	FinishedAt     time.Time `json:"finishedAt"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type RepoDiagnosticAIReviewMetadata struct {
+	Available bool                                  `json:"available"`
+	Entries   []RepoDiagnosticAIReviewEntryMetadata `json:"entries"`
+}
+
+type RepoDiagnosticAIReviewEntryMetadata struct {
+	ID          int64     `json:"id"`
+	CommandHash string    `json:"commandHash,omitempty"`
+	Decision    string    `json:"decision,omitempty"`
+	Confidence  float64   `json:"confidence,omitempty"`
+	CreatedAt   time.Time `json:"createdAt,omitempty"`
+}
+
 type SetupSession struct {
 	ID              int64     `json:"id"`
 	InstalledRepoID int64     `json:"installedRepoId"`
