@@ -1,12 +1,16 @@
 package detector
 
 import (
+	"context"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"instantrepo/internal/domain"
 )
+
+const versionCommandTimeout = time.Second
 
 type EnvironmentDetector struct{}
 
@@ -74,7 +78,10 @@ func (d *EnvironmentDetector) detectPip() domain.DetectedTool {
 }
 
 func runVersionCommand(binary string, args ...string) string {
-	cmd := exec.Command(binary, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), versionCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
