@@ -292,36 +292,14 @@ func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values
 	startedAt := time.Now().UTC()
 	result, err := s.envFiles.ApplyValues(analyzeResp.Analysis, values)
 	finishedAt := time.Now().UTC()
-	if err != nil {
-		failed := failedGuardedSetupResult("create-env-file", "instantrepo internal:prepare-env", analyzeResp.Analysis.RepoPath, err, startedAt, finishedAt)
-		if s.setupRecorder != nil {
-			if recordErr := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", failed, startedAt, finishedAt); recordErr != nil {
-				return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
-			}
-		}
-		return domain.ExecuteResponse{}, err
+	action := guardedSetupAction{
+		repoPath: analyzeResp.Source.Path,
+		stepID:   "create-env-file",
+		title:    "Prepare local .env file",
+		command:  "instantrepo internal:prepare-env",
+		cwd:      analyzeResp.Analysis.RepoPath,
 	}
-	result.Stdout = RedactLikelySecrets(result.Stdout)
-	result.Stderr = RedactLikelySecrets(result.Stderr)
-
-	if s.setupRecorder != nil {
-		if err := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", result, startedAt, finishedAt); err != nil {
-			return domain.ExecuteResponse{}, err
-		}
-	}
-
-	refreshed, refreshErr := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
-	if refreshErr == nil {
-		analyzeResp = refreshed
-	}
-
-	return domain.ExecuteResponse{
-		Source:      analyzeResp.Source,
-		Analysis:    analyzeResp.Analysis,
-		Environment: analyzeResp.Environment,
-		Plan:        analyzeResp.Plan,
-		Result:      result,
-	}, nil
+	return s.finishEnvDraftAction(ctx, localPath, analyzeResp, action, result, err, startedAt, finishedAt)
 }
 
 func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
@@ -334,20 +312,32 @@ func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) 
 	startedAt := time.Now().UTC()
 	result, err := s.envFiles.WriteRaw(analyzeResp.Analysis.RepoPath, analyzeResp.Analysis.Env.TargetPath, content)
 	finishedAt := time.Now().UTC()
-	if err != nil {
-		failed := failedGuardedSetupResult("save-env-file", "instantrepo internal:save-env", analyzeResp.Analysis.RepoPath, err, startedAt, finishedAt)
+	action := guardedSetupAction{
+		repoPath: analyzeResp.Source.Path,
+		stepID:   "save-env-file",
+		title:    "Save local .env file",
+		command:  "instantrepo internal:save-env",
+		cwd:      analyzeResp.Analysis.RepoPath,
+	}
+	return s.finishEnvDraftAction(ctx, localPath, analyzeResp, action, result, err, startedAt, finishedAt)
+}
+
+func (s *AppService) finishEnvDraftAction(ctx context.Context, localPath string, analyzeResp domain.AnalyzeResponse, action guardedSetupAction, result domain.ExecutionResult, runErr error, startedAt, finishedAt time.Time) (domain.ExecuteResponse, error) {
+	if runErr != nil {
+		failed := failedGuardedSetupResult(action.stepID, action.command, action.cwd, runErr, startedAt, finishedAt)
 		if s.setupRecorder != nil {
-			if recordErr := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", failed, startedAt, finishedAt); recordErr != nil {
-				return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
+			if recordErr := s.setupRecorder.recordGuardedSetupAction(ctx, action, failed, startedAt, finishedAt); recordErr != nil {
+				return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", runErr, recordErr)
 			}
 		}
-		return domain.ExecuteResponse{}, err
+		return domain.ExecuteResponse{}, runErr
 	}
+
 	result.Stdout = RedactLikelySecrets(result.Stdout)
 	result.Stderr = RedactLikelySecrets(result.Stderr)
 
 	if s.setupRecorder != nil {
-		if err := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", result, startedAt, finishedAt); err != nil {
+		if err := s.setupRecorder.recordGuardedSetupAction(ctx, action, result, startedAt, finishedAt); err != nil {
 			return domain.ExecuteResponse{}, err
 		}
 	}
@@ -356,7 +346,6 @@ func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) 
 	if refreshErr == nil {
 		analyzeResp = refreshed
 	}
-
 	return domain.ExecuteResponse{
 		Source:      analyzeResp.Source,
 		Analysis:    analyzeResp.Analysis,

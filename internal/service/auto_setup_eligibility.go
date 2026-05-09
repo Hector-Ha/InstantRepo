@@ -39,67 +39,100 @@ type AutoSetupStepEligibility struct {
 	CommandPreview string
 }
 
+type autoSetupClassifier struct {
+	installScriptPolicy string
+	safetyBlocked       bool
+	envBlocked          bool
+	toolBlocked         bool
+	availableTools      map[string]bool
+	priorStepStatuses   map[string]string
+	priorFailed         bool
+}
+
 func ClassifyAutoSetupSteps(req AutoSetupEligibilityRequest) AutoSetupEligibilityResponse {
-	installScriptPolicy := normalizeInstallScriptPolicy(req.InstallScriptPolicy)
+	classifier := newAutoSetupClassifier(req)
 	response := AutoSetupEligibilityResponse{
-		InstallScriptPolicy: installScriptPolicy,
+		InstallScriptPolicy: classifier.installScriptPolicy,
 		Steps:               make([]AutoSetupStepEligibility, 0, len(req.Plan.Steps)),
 	}
-	safetyBlocked := hasHighRiskSafety(req.Plan.Safety)
-	envBlocked := hasUnresolvedUserEnv(req.Plan.Env)
-	toolBlocked := hasMissingSystemTool(req.Plan.Gaps)
-	availableTools := availableToolSet(req.Environment)
-	priorFailed := false
 
 	for _, step := range req.Plan.Steps {
-		autoCandidate := isAutoAllowedCandidate(step)
-		eligibility := AutoSetupStepEligibility{
-			StepID:         step.ID,
-			Status:         AutoSetupStepUncertain,
-			Reason:         "Step needs review before Auto Setup can run it.",
-			CommandPreview: commandPreviewForPolicy(step, installScriptPolicy),
-		}
-		if safetyBlocked {
-			eligibility.Status = AutoSetupStepRiskStop
-			eligibility.Reason = "High-risk safety finding stops Auto Setup before commands run."
-		} else if step.Risk == domain.RiskHigh && step.Type != "system-install" && step.Type != "env-review" {
-			eligibility.Status = AutoSetupStepRiskStop
-			eligibility.Reason = "High-risk setup step is excluded from Auto Setup."
-		} else if priorFailed || req.PriorStepStatuses[step.ID] == domain.StepRunStatusFailed {
-			eligibility.Status = AutoSetupStepAttentionStop
-			eligibility.Reason = "Failed prior setup step needs attention before Auto Setup can continue."
-		} else if step.Type == "system-install" || toolBlocked {
-			eligibility.Status = AutoSetupStepAttentionStop
-			eligibility.Reason = "Missing System Tool needs user attention outside Auto Setup."
-		} else if isReadmeOnlyStep(step) {
-			eligibility.Status = AutoSetupStepUncertain
-			eligibility.Reason = "README-only command lacks manifest or config confirmation."
-		} else if step.Type == "env-review" || envBlocked {
-			eligibility.Status = AutoSetupStepAttentionStop
-			eligibility.Reason = "Unresolved env values need user attention before Auto Setup can continue."
-		} else if isBuildOrTestStep(step) {
-			eligibility.Status = AutoSetupStepManual
-			eligibility.Reason = "Build and test commands are excluded from Auto Setup."
-		} else if isManualStep(step) {
-			eligibility.Status = AutoSetupStepManual
-			eligibility.Reason = "Manual setup step needs user action outside Auto Setup."
-		} else if isLaunchStep(step) {
-			eligibility.Status = AutoSetupStepLaunchOnly
-			eligibility.Reason = "Launch commands run after setup and are not part of Auto Setup."
-		} else if missingTools := missingRequiredTools(step, availableTools); autoCandidate && len(missingTools) > 0 {
-			eligibility.Status = AutoSetupStepAttentionStop
-			eligibility.Reason = "Missing System Tool needs user attention outside Auto Setup: " + strings.Join(missingTools, ", ")
-		} else if autoCandidate {
-			eligibility.Status = AutoSetupStepAutoAllowed
-			eligibility.Reason = "Setup step is backed by manifest evidence."
-		}
+		eligibility := classifier.classify(step)
 		response.Steps = append(response.Steps, eligibility)
-		if req.PriorStepStatuses[step.ID] == domain.StepRunStatusFailed {
-			priorFailed = true
-		}
+		classifier.observe(step)
 	}
 
 	return response
+}
+
+func newAutoSetupClassifier(req AutoSetupEligibilityRequest) *autoSetupClassifier {
+	return &autoSetupClassifier{
+		installScriptPolicy: normalizeInstallScriptPolicy(req.InstallScriptPolicy),
+		safetyBlocked:       hasHighRiskSafety(req.Plan.Safety),
+		envBlocked:          hasUnresolvedUserEnv(req.Plan.Env),
+		toolBlocked:         hasMissingSystemTool(req.Plan.Gaps),
+		availableTools:      availableToolSet(req.Environment),
+		priorStepStatuses:   req.PriorStepStatuses,
+	}
+}
+
+func (c *autoSetupClassifier) classify(step domain.ExecutionStep) AutoSetupStepEligibility {
+	autoCandidate := isAutoAllowedCandidate(step)
+	eligibility := AutoSetupStepEligibility{
+		StepID:         step.ID,
+		Status:         AutoSetupStepUncertain,
+		Reason:         "Step needs review before Auto Setup can run it.",
+		CommandPreview: commandPreviewForPolicy(step, c.installScriptPolicy),
+	}
+
+	switch {
+	case c.safetyBlocked:
+		eligibility.Status = AutoSetupStepRiskStop
+		eligibility.Reason = "High-risk safety finding stops Auto Setup before commands run."
+	case step.Risk == domain.RiskHigh && step.Type != "system-install" && step.Type != "env-review":
+		eligibility.Status = AutoSetupStepRiskStop
+		eligibility.Reason = "High-risk setup step is excluded from Auto Setup."
+	case c.priorFailed || c.priorStepStatuses[step.ID] == domain.StepRunStatusFailed:
+		eligibility.Status = AutoSetupStepAttentionStop
+		eligibility.Reason = "Failed prior setup step needs attention before Auto Setup can continue."
+	case step.Type == "system-install" || c.toolBlocked:
+		eligibility.Status = AutoSetupStepAttentionStop
+		eligibility.Reason = "Missing System Tool needs user attention outside Auto Setup."
+	case isReadmeOnlyStep(step):
+		eligibility.Status = AutoSetupStepUncertain
+		eligibility.Reason = "README-only command lacks manifest or config confirmation."
+	case step.Type == "env-review" || c.envBlocked:
+		eligibility.Status = AutoSetupStepAttentionStop
+		eligibility.Reason = "Unresolved env values need user attention before Auto Setup can continue."
+	case isBuildOrTestStep(step):
+		eligibility.Status = AutoSetupStepManual
+		eligibility.Reason = "Build and test commands are excluded from Auto Setup."
+	case isManualStep(step):
+		eligibility.Status = AutoSetupStepManual
+		eligibility.Reason = "Manual setup step needs user action outside Auto Setup."
+	case isLaunchStep(step):
+		eligibility.Status = AutoSetupStepLaunchOnly
+		eligibility.Reason = "Launch commands run after setup and are not part of Auto Setup."
+	case autoCandidate:
+		c.classifyAutoCandidate(step, &eligibility)
+	}
+	return eligibility
+}
+
+func (c *autoSetupClassifier) classifyAutoCandidate(step domain.ExecutionStep, eligibility *AutoSetupStepEligibility) {
+	if missingTools := missingRequiredTools(step, c.availableTools); len(missingTools) > 0 {
+		eligibility.Status = AutoSetupStepAttentionStop
+		eligibility.Reason = "Missing System Tool needs user attention outside Auto Setup: " + strings.Join(missingTools, ", ")
+		return
+	}
+	eligibility.Status = AutoSetupStepAutoAllowed
+	eligibility.Reason = "Setup step is backed by manifest evidence."
+}
+
+func (c *autoSetupClassifier) observe(step domain.ExecutionStep) {
+	if c.priorStepStatuses[step.ID] == domain.StepRunStatusFailed {
+		c.priorFailed = true
+	}
 }
 
 func availableToolSet(env domain.EnvironmentReport) map[string]bool {

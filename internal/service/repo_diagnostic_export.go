@@ -27,6 +27,18 @@ type repoDiagnosticStore interface {
 	StepRunsBySetupSessionID(ctx context.Context, setupSessionID int64) ([]domain.StepRun, error)
 }
 
+type repoDiagnosticSanitizer struct {
+	logMaxRunes     int
+	truncatedMarker string
+}
+
+func newRepoDiagnosticSanitizer() repoDiagnosticSanitizer {
+	return repoDiagnosticSanitizer{
+		logMaxRunes:     repoDiagnosticLogMaxRunes,
+		truncatedMarker: repoDiagnosticLogTruncatedMarker,
+	}
+}
+
 func (s *AppService) ExportRepoDiagnostics(ctx context.Context, req domain.RepoDiagnosticExportRequest) (domain.RepoDiagnosticExport, error) {
 	diagnostics, ok := s.installedRepos.(repoDiagnosticStore)
 	if !ok {
@@ -50,9 +62,10 @@ func (s *AppService) ExportRepoDiagnostics(ctx context.Context, req domain.RepoD
 		return domain.RepoDiagnosticExport{}, fmt.Errorf("list setup sessions for diagnostic export: %w", err)
 	}
 
+	sanitizer := newRepoDiagnosticSanitizer()
 	exportSessions := make([]domain.RepoDiagnosticSetupSession, 0, len(sessions))
 	for _, session := range sessions {
-		steps, err := s.diagnosticStepsForSession(ctx, diagnostics, session.ID)
+		steps, err := s.diagnosticStepsForSession(ctx, diagnostics, sanitizer, session.ID)
 		if err != nil {
 			return domain.RepoDiagnosticExport{}, err
 		}
@@ -70,7 +83,7 @@ func (s *AppService) ExportRepoDiagnostics(ctx context.Context, req domain.RepoD
 	return domain.RepoDiagnosticExport{
 		SchemaVersion: repoDiagnosticSchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		Repo:          diagnosticRepoIdentity(repo),
+		Repo:          sanitizer.repoIdentity(repo),
 		App: domain.RepoDiagnosticAppInfo{
 			Name:    "InstantRepo",
 			Version: repoDiagnosticAppVersion,
@@ -81,7 +94,7 @@ func (s *AppService) ExportRepoDiagnostics(ctx context.Context, req domain.RepoD
 			Tools: environment.Tools,
 		},
 		Analysis:      diagnosticAnalysisSummary(analysis),
-		SetupPlan:     diagnosticSetupPlanSummary(plan),
+		SetupPlan:     diagnosticSetupPlanSummary(plan, sanitizer),
 		SetupSessions: exportSessions,
 		AIReview: domain.RepoDiagnosticAIReviewMetadata{
 			Available: false,
@@ -114,7 +127,7 @@ func (s *AppService) repoForDiagnosticExport(ctx context.Context, diagnostics re
 	return repo, nil
 }
 
-func (s *AppService) diagnosticStepsForSession(ctx context.Context, diagnostics repoDiagnosticStore, setupSessionID int64) ([]domain.RepoDiagnosticStep, error) {
+func (s *AppService) diagnosticStepsForSession(ctx context.Context, diagnostics repoDiagnosticStore, sanitizer repoDiagnosticSanitizer, setupSessionID int64) ([]domain.RepoDiagnosticStep, error) {
 	runs, err := diagnostics.StepRunsBySetupSessionID(ctx, setupSessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list step runs for diagnostic export: %w", err)
@@ -136,12 +149,12 @@ func (s *AppService) diagnosticStepsForSession(ctx context.Context, diagnostics 
 			StepID:         run.StepID,
 			Title:          run.Title,
 			CommandHash:    run.CommandHash,
-			CommandPreview: commandPreview(run.CommandPreview),
+			CommandPreview: sanitizer.commandPreview(run.CommandPreview),
 			Cwd:            run.Cwd,
 			Status:         run.Status,
 			ExitCode:       run.ExitCode,
 			Duration:       run.Duration,
-			Log:            sanitizeDiagnosticLog(logContent),
+			Log:            sanitizer.log(logContent),
 			StartedAt:      run.StartedAt,
 			FinishedAt:     run.FinishedAt,
 			CreatedAt:      run.CreatedAt,
@@ -151,11 +164,11 @@ func (s *AppService) diagnosticStepsForSession(ctx context.Context, diagnostics 
 	return steps, nil
 }
 
-func diagnosticRepoIdentity(repo domain.InstalledRepo) domain.RepoDiagnosticRepoIdentity {
+func (s repoDiagnosticSanitizer) repoIdentity(repo domain.InstalledRepo) domain.RepoDiagnosticRepoIdentity {
 	return domain.RepoDiagnosticRepoIdentity{
 		ID:             repo.ID,
-		RawURL:         redactDiagnosticRepoURL(repo.RawURL),
-		NormalizedURL:  redactDiagnosticRepoURL(repo.NormalizedURL),
+		RawURL:         s.repoURL(repo.RawURL),
+		NormalizedURL:  s.repoURL(repo.NormalizedURL),
 		LocalPath:      repo.LocalPath,
 		Status:         repo.Status,
 		CreatedAt:      repo.CreatedAt,
@@ -164,7 +177,7 @@ func diagnosticRepoIdentity(repo domain.InstalledRepo) domain.RepoDiagnosticRepo
 	}
 }
 
-func redactDiagnosticRepoURL(raw string) string {
+func (s repoDiagnosticSanitizer) repoURL(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return raw
 	}
@@ -175,6 +188,10 @@ func redactDiagnosticRepoURL(raw string) string {
 	}
 	parsed.User = nil
 	return parsed.String()
+}
+
+func (s repoDiagnosticSanitizer) commandPreview(command string) string {
+	return commandPreview(command)
 }
 
 func diagnosticAnalysisSummary(analysis domain.RepositoryAnalysis) domain.RepoDiagnosticAnalysisSummary {
@@ -190,13 +207,13 @@ func diagnosticAnalysisSummary(analysis domain.RepositoryAnalysis) domain.RepoDi
 	}
 }
 
-func diagnosticSetupPlanSummary(plan domain.SetupPlan) domain.RepoDiagnosticSetupPlanSummary {
+func diagnosticSetupPlanSummary(plan domain.SetupPlan, sanitizer repoDiagnosticSanitizer) domain.RepoDiagnosticSetupPlanSummary {
 	steps := make([]domain.RepoDiagnosticPlanStep, 0, len(plan.Steps))
 	for _, step := range plan.Steps {
 		steps = append(steps, domain.RepoDiagnosticPlanStep{
 			ID:               step.ID,
 			Title:            step.Title,
-			CommandPreview:   commandPreview(step.Command),
+			CommandPreview:   sanitizer.commandPreview(step.Command),
 			Type:             step.Type,
 			Importance:       step.Importance,
 			Risk:             step.Risk,
@@ -237,13 +254,13 @@ func diagnosticEnvVars(vars []domain.EnvVarRequirement) []domain.RepoDiagnosticE
 	return result
 }
 
-func sanitizeDiagnosticLog(logContent string) string {
+func (s repoDiagnosticSanitizer) log(logContent string) string {
 	redacted := RedactLikelySecrets(logContent)
-	redacted = redactDiagnosticAILines(redacted)
-	return truncateDiagnosticLog(redacted)
+	redacted = s.aiLines(redacted)
+	return s.truncateLog(redacted)
 }
 
-func redactDiagnosticAILines(input string) string {
+func (s repoDiagnosticSanitizer) aiLines(input string) string {
 	if input == "" {
 		return input
 	}
@@ -263,7 +280,7 @@ func redactDiagnosticAILines(input string) string {
 
 		lower := strings.ToLower(lineBody)
 		if strings.Contains(lower, "ai prompt") || strings.Contains(lower, "ai response") || strings.Contains(lower, "full prompt") || strings.Contains(lower, "full response") {
-			builder.WriteString(redactDiagnosticLineValue(lineBody))
+			builder.WriteString(s.lineValue(lineBody))
 			builder.WriteString(ending)
 			continue
 		}
@@ -272,7 +289,7 @@ func redactDiagnosticAILines(input string) string {
 	return builder.String()
 }
 
-func redactDiagnosticLineValue(line string) string {
+func (s repoDiagnosticSanitizer) lineValue(line string) string {
 	idx := strings.IndexAny(line, ":=")
 	if idx < 0 {
 		return "[REDACTED]"
@@ -280,10 +297,10 @@ func redactDiagnosticLineValue(line string) string {
 	return strings.TrimRight(line[:idx+1], " \t") + " [REDACTED]"
 }
 
-func truncateDiagnosticLog(logContent string) string {
+func (s repoDiagnosticSanitizer) truncateLog(logContent string) string {
 	runes := []rune(logContent)
-	if len(runes) <= repoDiagnosticLogMaxRunes {
+	if len(runes) <= s.logMaxRunes {
 		return logContent
 	}
-	return string(runes[:repoDiagnosticLogMaxRunes]) + repoDiagnosticLogTruncatedMarker
+	return string(runes[:s.logMaxRunes]) + s.truncatedMarker
 }

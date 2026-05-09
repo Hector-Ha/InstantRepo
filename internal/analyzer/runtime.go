@@ -26,37 +26,46 @@ func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAna
 		return
 	}
 
-	envConfig, services, requirements, steps, evidence, unknowns := detectRuntimeContext(analysis.RepoPath)
+	runtimeContext := detectRuntimeContext(analysis.RepoPath)
 
-	analysis.Env = envConfig
-	for _, service := range services {
+	analysis.Env = runtimeContext.envConfig
+	for _, service := range runtimeContext.services {
 		if !hasService(analysis.Services, service.Name, service.Source) {
 			analysis.Services = append(analysis.Services, service)
 		}
 	}
-	for _, req := range requirements {
+	for _, req := range runtimeContext.requirements {
 		if !hasRequirement(analysis.Requirements, req.Tool) {
 			analysis.Requirements = append(analysis.Requirements, req)
 		}
 	}
-	for _, step := range steps {
+	for _, step := range runtimeContext.steps {
 		if !hasStep(analysis.Steps, step.ID) {
 			analysis.Steps = append(analysis.Steps, step)
 		}
 	}
-	for _, item := range evidence {
+	for _, item := range runtimeContext.evidence {
 		if !slices.Contains(analysis.Evidence, item) {
 			analysis.Evidence = append(analysis.Evidence, item)
 		}
 	}
-	for _, item := range unknowns {
+	for _, item := range runtimeContext.unknowns {
 		if !slices.Contains(analysis.Unknowns, item) {
 			analysis.Unknowns = append(analysis.Unknowns, item)
 		}
 	}
 }
 
-func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.ServiceDependency, []domain.ToolRequirement, []domain.ExecutionStep, []string, []string) {
+type runtimeContext struct {
+	envConfig    domain.EnvironmentConfig
+	services     []domain.ServiceDependency
+	requirements []domain.ToolRequirement
+	steps        []domain.ExecutionStep
+	evidence     []string
+	unknowns     []string
+}
+
+func detectRuntimeContext(repoPath string) runtimeContext {
 	services := []domain.ServiceDependency{}
 	requirements := []domain.ToolRequirement{}
 	steps := []domain.ExecutionStep{}
@@ -80,21 +89,21 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 		for _, templatePath := range templates {
 			targetDir := filepath.Dir(templatePath)
 			targetPath := filepath.Join(targetDir, ".env")
-			
+
 			if envConfig.TargetPath == "" {
 				envConfig.TemplatePath = templatePath
 				envConfig.TargetPath = targetPath
 			}
-			
+
 			if util.FileExists(targetPath) {
 				envConfig.TargetExists = true
 			}
-			
+
 			vars := parseEnvTemplate(templatePath)
 			for i := range vars {
 				vars[i].TargetDir = targetDir
 			}
-			
+
 			envConfig.Variables = mergeEnvVars(envConfig.Variables, vars)
 			evidence = append(evidence, filepath.Base(templatePath)+" found in "+targetDir)
 		}
@@ -216,7 +225,14 @@ func detectRuntimeContext(repoPath string) (domain.EnvironmentConfig, []domain.S
 		unknowns = append(unknowns, "Service-related env vars were detected, but no Docker Compose file was found for local provisioning")
 	}
 
-	return envConfig, services, requirements, steps, evidence, unknowns
+	return runtimeContext{
+		envConfig:    envConfig,
+		services:     services,
+		requirements: requirements,
+		steps:        steps,
+		evidence:     evidence,
+		unknowns:     unknowns,
+	}
 }
 
 func choosePrimaryEnvTemplate(repoPath string, templates []string) string {

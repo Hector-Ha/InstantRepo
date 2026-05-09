@@ -32,6 +32,15 @@ type setupSessionRecorder struct {
 	activeSessions map[string]domain.SetupSession
 }
 
+type guardedSetupAction struct {
+	repoURL  string
+	repoPath string
+	stepID   string
+	title    string
+	command  string
+	cwd      string
+}
+
 func newSetupSessionRecorder(installedRepos InstalledRepoStore) *setupSessionRecorder {
 	setupSessions, ok := installedRepos.(SetupSessionStore)
 	if installedRepos == nil || !ok {
@@ -125,32 +134,41 @@ func (r *setupSessionRecorder) recordStepRun(ctx context.Context, session domain
 	return nil
 }
 
-func (r *setupSessionRecorder) recordGuardedSetupAction(ctx context.Context, repoURL, repoPath, title string, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
+func (r *setupSessionRecorder) recordGuardedSetupAction(ctx context.Context, action guardedSetupAction, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
 	if r == nil {
 		return nil
 	}
 
-	setupSession, err := r.start(ctx, repoURL, repoPath)
+	setupSession, err := r.start(ctx, action.repoURL, action.repoPath)
 	if err != nil {
 		return err
 	}
 
 	stepID := strings.TrimSpace(result.StepID)
 	if stepID == "" {
-		stepID = "setup-action"
+		stepID = strings.TrimSpace(action.stepID)
+		if stepID == "" {
+			stepID = "setup-action"
+		}
 	}
 	command := strings.TrimSpace(result.Command)
 	if command == "" {
-		command = "instantrepo internal:" + stepID
+		command = strings.TrimSpace(action.command)
+		if command == "" {
+			command = "instantrepo internal:" + stepID
+		}
 	}
 	cwd := strings.TrimSpace(result.Cwd)
 	if cwd == "" {
-		cwd = repoPath
+		cwd = strings.TrimSpace(action.cwd)
+		if cwd == "" {
+			cwd = action.repoPath
+		}
 	}
 
 	step := domain.ExecutionStep{
 		ID:               stepID,
-		Title:            title,
+		Title:            action.title,
 		Command:          command,
 		Cwd:              cwd,
 		Type:             "env-setup",
