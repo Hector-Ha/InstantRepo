@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"instantrepo/internal/analyzer"
@@ -23,9 +22,7 @@ type AppService struct {
 	executor       *Executor
 	envFiles       *EnvFileManager
 	installedRepos InstalledRepoStore
-	setupSessions  SetupSessionStore
-	setupSessionMu sync.Mutex
-	activeSessions map[string]domain.SetupSession
+	setupRecorder  *setupSessionRecorder
 	disk           DiskChecker
 }
 
@@ -57,11 +54,6 @@ func NewAppService() *AppService {
 }
 
 func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *AppService {
-	var setupSessions SetupSessionStore
-	if candidate, ok := installedRepos.(SetupSessionStore); ok {
-		setupSessions = candidate
-	}
-
 	return &AppService{
 		fetcher:        NewRepoFetcher(),
 		analyzer:       analyzer.NewRepositoryAnalyzer(),
@@ -70,8 +62,7 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 		executor:       NewExecutor(),
 		envFiles:       NewEnvFileManager(),
 		installedRepos: installedRepos,
-		setupSessions:  setupSessions,
-		activeSessions: map[string]domain.SetupSession{},
+		setupRecorder:  newSetupSessionRecorder(installedRepos),
 		disk:           osDiskChecker{},
 	}
 }
@@ -219,16 +210,11 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	var installedRepo domain.InstalledRepo
 	var setupSession domain.SetupSession
-	if s.setupSessions != nil {
-		installedRepo, err = s.saveInstalledRepoForSetup(ctx, req.RepoURL, analyzeResp.Source.Path)
+	if s.setupRecorder != nil {
+		setupSession, err = s.setupRecorder.start(ctx, req.RepoURL, analyzeResp.Source.Path)
 		if err != nil {
 			return domain.ExecuteResponse{}, err
-		}
-		setupSession, err = s.setupSessionForRepo(ctx, installedRepo.ID, analyzeResp.Source.Path)
-		if err != nil {
-			return domain.ExecuteResponse{}, fmt.Errorf("start setup session: %w", err)
 		}
 	}
 
@@ -247,11 +233,11 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 	result.Stdout = RedactLikelySecrets(result.Stdout)
 	result.Stderr = RedactLikelySecrets(result.Stderr)
 
-	if s.setupSessions != nil {
-		if err := s.recordStepRun(ctx, setupSession, *selected, result, startedAt, finishedAt); err != nil {
+	if s.setupRecorder != nil {
+		if err := s.setupRecorder.recordStepRun(ctx, setupSession, *selected, result, startedAt, finishedAt); err != nil {
 			return domain.ExecuteResponse{}, err
 		}
-		if err := s.setupSessions.CleanupSetupSessionRetention(ctx, time.Now().UTC()); err != nil {
+		if err := s.setupRecorder.cleanup(ctx, time.Now().UTC()); err != nil {
 			return domain.ExecuteResponse{}, fmt.Errorf("cleanup setup session retention: %w", err)
 		}
 	}
@@ -308,16 +294,20 @@ func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values
 	finishedAt := time.Now().UTC()
 	if err != nil {
 		failed := failedGuardedSetupResult("create-env-file", "instantrepo internal:prepare-env", analyzeResp.Analysis.RepoPath, err, startedAt, finishedAt)
-		if recordErr := s.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", failed, startedAt, finishedAt); recordErr != nil {
-			return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
+		if s.setupRecorder != nil {
+			if recordErr := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", failed, startedAt, finishedAt); recordErr != nil {
+				return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
+			}
 		}
 		return domain.ExecuteResponse{}, err
 	}
 	result.Stdout = RedactLikelySecrets(result.Stdout)
 	result.Stderr = RedactLikelySecrets(result.Stderr)
 
-	if err := s.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", result, startedAt, finishedAt); err != nil {
-		return domain.ExecuteResponse{}, err
+	if s.setupRecorder != nil {
+		if err := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Prepare local .env file", result, startedAt, finishedAt); err != nil {
+			return domain.ExecuteResponse{}, err
+		}
 	}
 
 	refreshed, refreshErr := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
@@ -346,16 +336,20 @@ func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) 
 	finishedAt := time.Now().UTC()
 	if err != nil {
 		failed := failedGuardedSetupResult("save-env-file", "instantrepo internal:save-env", analyzeResp.Analysis.RepoPath, err, startedAt, finishedAt)
-		if recordErr := s.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", failed, startedAt, finishedAt); recordErr != nil {
-			return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
+		if s.setupRecorder != nil {
+			if recordErr := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", failed, startedAt, finishedAt); recordErr != nil {
+				return domain.ExecuteResponse{}, fmt.Errorf("%w; record failed setup action: %v", err, recordErr)
+			}
 		}
 		return domain.ExecuteResponse{}, err
 	}
 	result.Stdout = RedactLikelySecrets(result.Stdout)
 	result.Stderr = RedactLikelySecrets(result.Stderr)
 
-	if err := s.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", result, startedAt, finishedAt); err != nil {
-		return domain.ExecuteResponse{}, err
+	if s.setupRecorder != nil {
+		if err := s.setupRecorder.recordGuardedSetupAction(ctx, "", analyzeResp.Source.Path, "Save local .env file", result, startedAt, finishedAt); err != nil {
+			return domain.ExecuteResponse{}, err
+		}
 	}
 
 	refreshed, refreshErr := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"instantrepo/internal/domain"
@@ -24,13 +25,44 @@ var (
 	bareProviderKeyPattern  = regexp.MustCompile(`\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{6,}|sk_(?:live|test)_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b`)
 )
 
-func (s *AppService) saveInstalledRepoForSetup(ctx context.Context, repoURL, localPath string) (domain.InstalledRepo, error) {
-	if s.installedRepos == nil {
-		return domain.InstalledRepo{}, fmt.Errorf("installed repo store is not configured")
+type setupSessionRecorder struct {
+	installedRepos InstalledRepoStore
+	setupSessions  SetupSessionStore
+	mu             sync.Mutex
+	activeSessions map[string]domain.SetupSession
+}
+
+func newSetupSessionRecorder(installedRepos InstalledRepoStore) *setupSessionRecorder {
+	setupSessions, ok := installedRepos.(SetupSessionStore)
+	if installedRepos == nil || !ok {
+		return nil
 	}
 
+	return &setupSessionRecorder{
+		installedRepos: installedRepos,
+		setupSessions:  setupSessions,
+		activeSessions: map[string]domain.SetupSession{},
+	}
+}
+
+func (r *setupSessionRecorder) start(ctx context.Context, repoURL, localPath string) (domain.SetupSession, error) {
+	if r == nil {
+		return domain.SetupSession{}, fmt.Errorf("setup session recorder is not configured")
+	}
+	installedRepo, err := r.saveInstalledRepoForSetup(ctx, repoURL, localPath)
+	if err != nil {
+		return domain.SetupSession{}, err
+	}
+	session, err := r.setupSessionForRepo(ctx, installedRepo.ID, localPath)
+	if err != nil {
+		return domain.SetupSession{}, fmt.Errorf("start setup session: %w", err)
+	}
+	return session, nil
+}
+
+func (r *setupSessionRecorder) saveInstalledRepoForSetup(ctx context.Context, repoURL, localPath string) (domain.InstalledRepo, error) {
 	now := time.Now().UTC()
-	repo, err := s.installedRepos.SaveInstalledRepo(ctx, domain.InstalledRepo{
+	repo, err := r.installedRepos.SaveInstalledRepo(ctx, domain.InstalledRepo{
 		RawURL:         repoURL,
 		NormalizedURL:  normalizeRepoURL(repoURL),
 		LocalPath:      localPath,
@@ -43,26 +75,26 @@ func (s *AppService) saveInstalledRepoForSetup(ctx context.Context, repoURL, loc
 	return repo, nil
 }
 
-func (s *AppService) setupSessionForRepo(ctx context.Context, installedRepoID int64, repoPath string) (domain.SetupSession, error) {
-	s.setupSessionMu.Lock()
-	defer s.setupSessionMu.Unlock()
+func (r *setupSessionRecorder) setupSessionForRepo(ctx context.Context, installedRepoID int64, repoPath string) (domain.SetupSession, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	if s.activeSessions == nil {
-		s.activeSessions = map[string]domain.SetupSession{}
+	if r.activeSessions == nil {
+		r.activeSessions = map[string]domain.SetupSession{}
 	}
-	if session, ok := s.activeSessions[repoPath]; ok {
+	if session, ok := r.activeSessions[repoPath]; ok {
 		return session, nil
 	}
 
-	session, err := s.setupSessions.StartSetupSession(ctx, installedRepoID, repoPath)
+	session, err := r.setupSessions.StartSetupSession(ctx, installedRepoID, repoPath)
 	if err != nil {
 		return domain.SetupSession{}, err
 	}
-	s.activeSessions[repoPath] = session
+	r.activeSessions[repoPath] = session
 	return session, nil
 }
 
-func (s *AppService) recordStepRun(ctx context.Context, session domain.SetupSession, step domain.ExecutionStep, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
+func (r *setupSessionRecorder) recordStepRun(ctx context.Context, session domain.SetupSession, step domain.ExecutionStep, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
 	status := domain.StepRunStatusSucceeded
 	if !result.Succeeded {
 		status = domain.StepRunStatusFailed
@@ -87,24 +119,20 @@ func (s *AppService) recordStepRun(ctx context.Context, session domain.SetupSess
 		FinishedAt:     finishedAt,
 	}
 
-	if _, err := s.setupSessions.RecordStepRun(ctx, run, formatStepRunLog(step, result)); err != nil {
+	if _, err := r.setupSessions.RecordStepRun(ctx, run, formatStepRunLog(step, result)); err != nil {
 		return fmt.Errorf("record setup step run: %w", err)
 	}
 	return nil
 }
 
-func (s *AppService) recordGuardedSetupAction(ctx context.Context, repoURL, repoPath, title string, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
-	if s.setupSessions == nil {
+func (r *setupSessionRecorder) recordGuardedSetupAction(ctx context.Context, repoURL, repoPath, title string, result domain.ExecutionResult, startedAt, finishedAt time.Time) error {
+	if r == nil {
 		return nil
 	}
 
-	installedRepo, err := s.saveInstalledRepoForSetup(ctx, repoURL, repoPath)
+	setupSession, err := r.start(ctx, repoURL, repoPath)
 	if err != nil {
 		return err
-	}
-	setupSession, err := s.setupSessionForRepo(ctx, installedRepo.ID, repoPath)
-	if err != nil {
-		return fmt.Errorf("start setup session: %w", err)
 	}
 
 	stepID := strings.TrimSpace(result.StepID)
@@ -134,13 +162,20 @@ func (s *AppService) recordGuardedSetupAction(ctx context.Context, repoURL, repo
 		step.Title = "Run guarded setup action"
 	}
 
-	if err := s.recordStepRun(ctx, setupSession, step, result, startedAt, finishedAt); err != nil {
+	if err := r.recordStepRun(ctx, setupSession, step, result, startedAt, finishedAt); err != nil {
 		return err
 	}
-	if err := s.setupSessions.CleanupSetupSessionRetention(ctx, time.Now().UTC()); err != nil {
+	if err := r.cleanup(ctx, time.Now().UTC()); err != nil {
 		return fmt.Errorf("cleanup setup session retention: %w", err)
 	}
 	return nil
+}
+
+func (r *setupSessionRecorder) cleanup(ctx context.Context, now time.Time) error {
+	if r == nil {
+		return nil
+	}
+	return r.setupSessions.CleanupSetupSessionRetention(ctx, now)
 }
 
 func failedGuardedSetupResult(stepID, command, cwd string, runErr error, startedAt, finishedAt time.Time) domain.ExecutionResult {
