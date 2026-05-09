@@ -26,6 +26,14 @@ export function ImportRepository(arg1, arg2) {
   return window['go']['main']['App']['ImportRepository'](arg1, arg2);
 }
 
+export function InstalledRepoDetails(arg1) {
+  return window['go']['main']['App']['InstalledRepoDetails'](arg1);
+}
+
+export function ListInstalledRepos() {
+  return window['go']['main']['App']['ListInstalledRepos']();
+}
+
 export function OpenDirectory() {
   return window['go']['main']['App']['OpenDirectory']();
 }

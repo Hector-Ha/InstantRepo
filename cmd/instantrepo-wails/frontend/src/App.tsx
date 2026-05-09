@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnalyzeRepository,
   ExecuteStep,
   GenerateEnvDraft,
   ImportRepository,
+  InstalledRepoDetails,
+  ListInstalledRepos,
   OpenDirectory,
   SaveEnvFile,
 } from "./wailsjs/wailsjs/go/main/App";
@@ -12,6 +14,9 @@ import type {
   AnalyzeSnapshot,
   ExecuteResponse,
   ExecutionStep,
+  InstalledRepoDetailsResponse,
+  InstalledRepoManagerResponse,
+  InstalledRepoSummary,
   StepStatus,
 } from "./types";
 import { redactLikelySecrets } from "./redaction";
@@ -162,6 +167,22 @@ function buildDuplicateConfirmationMessage(
   return `Existing clone found:\n${plan.localPath}\n\nOpen existing clone? Choose Cancel to clone another copy into:\n${preflight.targetPath}`;
 }
 
+function formatManagerTime(value: string, emptyLabel: string) {
+  if (!value || value.startsWith("0001-")) {
+    return emptyLabel;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return emptyLabel;
+  }
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="summary-row">
@@ -185,6 +206,142 @@ function StatusBadge({ status }: { status: string }) {
       ) : null}
       {status}
     </span>
+  );
+}
+
+function InstalledRepoManager({
+  repos,
+  details,
+  selectedRepoId,
+  loaded,
+  loading,
+  onRefresh,
+  onShowDetails,
+  onAnalyze,
+}: {
+  repos: InstalledRepoSummary[];
+  details: InstalledRepoDetailsResponse | null;
+  selectedRepoId: number | null;
+  loaded: boolean;
+  loading: boolean;
+  onRefresh: () => void;
+  onShowDetails: (repo: InstalledRepoSummary) => void;
+  onAnalyze: (repo: InstalledRepoSummary) => void;
+}) {
+  return (
+    <section className="card" aria-labelledby="section-manager">
+      <div className="section-heading">
+        <div>
+          <h2 id="section-manager">
+            <span className="section-number">1</span>Installed Repos
+          </h2>
+          <p>Local App Database entries remembered by InstantRepo.</p>
+        </div>
+        <button
+          id="btn-refresh-manager"
+          type="button"
+          className="button button-subtle"
+          onClick={onRefresh}
+          disabled={loading}
+          aria-label="Refresh Installed Repos"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {repos.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">□</div>
+          <p>
+            {loaded
+              ? "No Installed Repos yet. Clone a repo or analyze a local folder to add it here."
+              : "Loading Installed Repos from the Local App Database."}
+          </p>
+        </div>
+      ) : (
+        <div className="manager-layout">
+          <div className="manager-list" aria-label="Installed Repos">
+            {repos.map((repo) => (
+              <article
+                className={`manager-row ${repo.id === selectedRepoId ? "active" : ""}`}
+                key={repo.id}
+              >
+                <div className="manager-row__body">
+                  <div className="manager-row__title">
+                    <strong>{repo.projectName}</strong>
+                    <StatusBadge status={repo.status} />
+                  </div>
+                  <p>{repo.localPath}</p>
+                  <div className="manager-meta">
+                    <span>
+                      Last activity{" "}
+                      {formatManagerTime(repo.lastActivityAt, "not recorded")}
+                    </span>
+                    <span>
+                      Last setup{" "}
+                      {formatManagerTime(repo.lastSetupAt, "not recorded")}
+                    </span>
+                  </div>
+                </div>
+                <div className="manager-actions">
+                  <button
+                    type="button"
+                    className="button button-subtle"
+                    onClick={() => onShowDetails(repo)}
+                    disabled={loading}
+                  >
+                    History
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => onAnalyze(repo)}
+                    disabled={loading}
+                  >
+                    Analyze
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {details ? (
+            <details className="history-panel">
+              <summary>
+                Recent Setup Sessions for {details.repo.projectName}
+              </summary>
+              {details.setupSessions.length === 0 ? (
+                <p className="history-empty">
+                  No Setup Sessions recorded for this Installed Repo.
+                </p>
+              ) : (
+                <div className="history-list">
+                  {details.setupSessions.map((session) => (
+                    <div className="history-item" key={session.id}>
+                      <div>
+                        <strong>Session #{session.id}</strong>
+                        <p>{session.repoPath}</p>
+                      </div>
+                      <div className="history-item__meta">
+                        <StatusBadge status={session.status} />
+                        <span>
+                          {formatManagerTime(session.updatedAt, "not recorded")}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </details>
+          ) : (
+            <div className="history-placeholder">
+              <strong>Setup History</strong>
+              <p>Select History on an Installed Repo to inspect recent Setup Sessions.</p>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -238,6 +395,16 @@ export default function App() {
   ]);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [installedRepos, setInstalledRepos] = useState<InstalledRepoSummary[]>(
+    [],
+  );
+  const [managerLoaded, setManagerLoaded] = useState(false);
+  const [managerLoading, setManagerLoading] = useState(false);
+  const [selectedManagerRepoId, setSelectedManagerRepoId] = useState<
+    number | null
+  >(null);
+  const [selectedRepoDetails, setSelectedRepoDetails] =
+    useState<InstalledRepoDetailsResponse | null>(null);
 
   const selectedStep = useMemo(
     () =>
@@ -260,7 +427,7 @@ export default function App() {
     [snapshot],
   );
 
-  const appendActivity = (
+  const appendActivity = useCallback((
     tone: ActivityEntry["tone"],
     label: string,
     message: string,
@@ -277,7 +444,28 @@ export default function App() {
     };
 
     setActivity((current) => [next, ...current].slice(0, 6));
-  };
+  }, []);
+
+  const loadInstalledRepos = useCallback(async () => {
+    setManagerLoading(true);
+    try {
+      const response =
+        (await ListInstalledRepos()) as InstalledRepoManagerResponse;
+      setInstalledRepos(response.repos ?? []);
+      setManagerLoaded(true);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setManagerLoaded(true);
+      setErrorMessage(message);
+      appendActivity("critical", "Manager Load Failed", message);
+    } finally {
+      setManagerLoading(false);
+    }
+  }, [appendActivity]);
+
+  useEffect(() => {
+    void loadInstalledRepos();
+  }, [loadInstalledRepos]);
 
   const syncSnapshot = (
     nextSnapshot: AnalyzeSnapshot,
@@ -415,6 +603,7 @@ export default function App() {
         successLabel,
         `${response.analysis.projectName} is ready at ${response.source.path}.`,
       );
+      await loadInstalledRepos();
     } catch (error) {
       const message = toErrorMessage(error);
       setErrorMessage(message);
@@ -479,6 +668,7 @@ export default function App() {
         response.result.stdout.trim() ||
           `Saved ${snapshot.plan.env.targetPath ?? ".env"}.`,
       );
+      void loadInstalledRepos();
     } catch (error) {
       const message = toErrorMessage(error);
       setErrorMessage(message);
@@ -555,6 +745,7 @@ export default function App() {
           ? `${selectedStep.title} completed in ${response.result.duration}.`
           : `${selectedStep.title} exited with code ${response.result.exitCode}.`,
       );
+      void loadInstalledRepos();
     } catch (error) {
       const message = toErrorMessage(error);
       setStepStates((current) => ({ ...current, [selectedStep.id]: "failed" }));
@@ -573,6 +764,56 @@ export default function App() {
         .pop()
         ?.replace(/\.git$/i, "") || "instantrepo-demo";
     setFolderPath(`C:\\Users\\Admin\\Desktop\\Workspaces\\${repoName}`);
+  };
+
+  const handleShowInstalledRepoDetails = async (repo: InstalledRepoSummary) => {
+    setSelectedManagerRepoId(repo.id);
+    setManagerLoading(true);
+    setErrorMessage(null);
+    try {
+      const response = (await InstalledRepoDetails(
+        repo.id,
+      )) as InstalledRepoDetailsResponse;
+      setSelectedRepoDetails(response);
+      appendActivity(
+        "info",
+        "History Loaded",
+        `Loaded Setup Sessions for ${repo.projectName}.`,
+      );
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "History Failed", message);
+    } finally {
+      setManagerLoading(false);
+    }
+  };
+
+  const handleAnalyzeInstalledRepo = async (repo: InstalledRepoSummary) => {
+    setFolderPath(repo.localPath);
+    setErrorMessage(null);
+    setBusyLabel(`Analyzing ${repo.projectName}...`);
+
+    try {
+      const response = (await AnalyzeRepository(
+        "",
+        repo.localPath,
+      )) as AnalyzeSnapshot;
+      const draft = await loadEnvDraft(response.source.path, response);
+      syncSnapshot(response, draft);
+      appendActivity(
+        "success",
+        "Installed Repo Loaded",
+        `${response.analysis.projectName} is ready at ${response.source.path}.`,
+      );
+      await loadInstalledRepos();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Analyze Failed", message);
+    } finally {
+      setBusyLabel(null);
+    }
   };
 
   const bannerState = busyLabel ? "busy" : errorMessage ? "failed" : "ready";
@@ -606,12 +847,23 @@ export default function App() {
       </header>
 
       <main className="page-grid">
+        <InstalledRepoManager
+          repos={installedRepos}
+          details={selectedRepoDetails}
+          selectedRepoId={selectedManagerRepoId}
+          loaded={managerLoaded}
+          loading={managerLoading || busyLabel !== null}
+          onRefresh={() => void loadInstalledRepos()}
+          onShowDetails={(repo) => void handleShowInstalledRepoDetails(repo)}
+          onAnalyze={(repo) => void handleAnalyzeInstalledRepo(repo)}
+        />
+
         {/* ── Section 1: Repository Input ── */}
         <section className="card" aria-labelledby="section-repo">
           <div className="section-heading">
             <div>
               <h2 id="section-repo">
-                <span className="section-number">1</span>Choose Repository
+                <span className="section-number">2</span>Choose Repository
               </h2>
               <p>Paste a remote URL or work from an existing local folder.</p>
             </div>
@@ -702,7 +954,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <h2 id="section-summary">
-                <span className="section-number">2</span>Analysis Summary
+                <span className="section-number">3</span>Analysis Summary
               </h2>
               <p>
                 Review what InstantRepo found before editing files or running
@@ -770,7 +1022,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <h2 id="section-env">
-                <span className="section-number">3</span>Environment File
+                <span className="section-number">4</span>Environment File
               </h2>
               <p>
                 Generate the draft first, then edit values directly and save the
@@ -842,7 +1094,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <h2 id="section-steps">
-                <span className="section-number">4</span>Setup Steps
+                <span className="section-number">5</span>Setup Steps
               </h2>
               <p>Select one step, read what it does, then run it.</p>
             </div>
@@ -943,7 +1195,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <h2 id="section-activity">
-                <span className="section-number">5</span>Recent Events
+                <span className="section-number">6</span>Recent Events
               </h2>
               <p>Simple feedback for the last actions taken in this session.</p>
             </div>

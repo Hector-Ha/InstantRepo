@@ -142,6 +142,34 @@ export interface ExecuteResponse extends AnalyzeSnapshot {
   result: ExecutionResult;
 }
 
+export interface InstalledRepoSummary {
+  id: number;
+  projectName: string;
+  localPath: string;
+  status: string;
+  lastAnalyzedAt: string;
+  lastSetupAt: string;
+  lastActivityAt: string;
+}
+
+export interface SetupSessionSummary {
+  id: number;
+  installedRepoId: number;
+  repoPath: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstalledRepoManagerResponse {
+  repos: InstalledRepoSummary[];
+}
+
+export interface InstalledRepoDetailsResponse {
+  repo: InstalledRepoSummary;
+  setupSessions: SetupSessionSummary[];
+}
+
 export interface ActivityEntry {
   id: string;
   time: string;

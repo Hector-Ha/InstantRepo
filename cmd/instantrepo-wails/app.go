@@ -48,6 +48,14 @@ func (a *App) ClonePreflight(repoURL, destinationRoot string) (domain.ClonePrefl
 	})
 }
 
+func (a *App) ListInstalledRepos() (domain.InstalledRepoManagerResponse, error) {
+	return a.service.ListInstalledRepos(a.appContext())
+}
+
+func (a *App) InstalledRepoDetails(installedRepoID int64) (domain.InstalledRepoDetailsResponse, error) {
+	return a.service.InstalledRepoDetails(a.appContext(), installedRepoID)
+}
+
 func (a *App) GenerateEnvDraft(localPath string) (string, error) {
 	return a.service.PreviewEnv(a.appContext(), localPath)
 }

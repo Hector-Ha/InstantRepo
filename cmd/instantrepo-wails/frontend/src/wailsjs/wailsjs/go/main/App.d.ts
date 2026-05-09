@@ -14,6 +14,10 @@ export function GenerateEnvDraft(arg1:string):Promise<string>;
 
 export function ImportRepository(arg1:string,arg2:string):Promise<domain.AnalyzeResponse>;
 
+export function InstalledRepoDetails(arg1:number):Promise<domain.InstalledRepoDetailsResponse>;
+
+export function ListInstalledRepos():Promise<domain.InstalledRepoManagerResponse>;
+
 export function OpenDirectory():Promise<string>;
 
 export function SaveEnvFile(arg1:string,arg2:string):Promise<domain.ExecuteResponse>;

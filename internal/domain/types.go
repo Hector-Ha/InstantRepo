@@ -83,6 +83,34 @@ const (
 	InstalledRepoStatusAnalyzed = "analyzed"
 )
 
+type InstalledRepoManagerResponse struct {
+	Repos []InstalledRepoSummary `json:"repos"`
+}
+
+type InstalledRepoDetailsResponse struct {
+	Repo          InstalledRepoSummary  `json:"repo"`
+	SetupSessions []SetupSessionSummary `json:"setupSessions"`
+}
+
+type InstalledRepoSummary struct {
+	ID             int64     `json:"id"`
+	ProjectName    string    `json:"projectName"`
+	LocalPath      string    `json:"localPath"`
+	Status         string    `json:"status"`
+	LastAnalyzedAt time.Time `json:"lastAnalyzedAt"`
+	LastSetupAt    time.Time `json:"lastSetupAt"`
+	LastActivityAt time.Time `json:"lastActivityAt"`
+}
+
+type SetupSessionSummary struct {
+	ID              int64     `json:"id"`
+	InstalledRepoID int64     `json:"installedRepoId"`
+	RepoPath        string    `json:"repoPath"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 type RepoDiagnosticExportRequest struct {
 	InstalledRepoID int64  `json:"installedRepoId,omitempty"`
 	LocalPath       string `json:"localPath,omitempty"`

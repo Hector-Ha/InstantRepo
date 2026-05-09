@@ -60,6 +60,27 @@ func (s *recordingInstalledRepoStore) CleanupSetupSessionRetention(_ context.Con
 	return nil
 }
 
+type installedRepoTestDetector struct{}
+
+func (d installedRepoTestDetector) Detect() domain.EnvironmentReport {
+	return domain.EnvironmentReport{
+		OS:   "test-os",
+		Arch: "test-arch",
+		Tools: []domain.DetectedTool{
+			{Name: "go", Version: "go1.26.2", Available: true},
+			{Name: "node", Version: "v24.0.0", Available: true},
+			{Name: "npm", Version: "11.0.0", Available: true},
+			{Name: "bun", Version: "1.3.3", Available: true},
+		},
+	}
+}
+
+func newInstalledRepoTestApp(installedRepos InstalledRepoStore) *AppService {
+	app := NewAppServiceWithInstalledRepoStore(installedRepos)
+	app.detector = installedRepoTestDetector{}
+	return app
+}
+
 func TestAnalyzePersistsInstalledRepo(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
@@ -67,7 +88,7 @@ func TestAnalyzePersistsInstalledRepo(t *testing.T) {
 	}
 
 	store := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(store)
+	app := newInstalledRepoTestApp(store)
 
 	resp, err := app.Analyze(context.Background(), domain.AnalyzeRequest{
 		RepoURL:   " https://github.com/Example/InstantRepo.git ",
@@ -106,7 +127,7 @@ func TestAnalyzePersistsLocalPathOnlyInstalledRepo(t *testing.T) {
 	}
 
 	store := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(store)
+	app := newInstalledRepoTestApp(store)
 
 	resp, err := app.Analyze(context.Background(), domain.AnalyzeRequest{
 		LocalPath: repoPath,
@@ -146,7 +167,7 @@ func TestAnalyzeUpdatesInstalledRepoForRepeatedAnalyze(t *testing.T) {
 	}
 	defer sqliteStore.Close()
 
-	app := NewAppServiceWithInstalledRepoStore(sqliteStore)
+	app := newInstalledRepoTestApp(sqliteStore)
 	req := domain.AnalyzeRequest{
 		RepoURL:   "https://github.com/Example/InstantRepo.git",
 		LocalPath: repoPath,
@@ -183,7 +204,7 @@ func TestExecutePersistsSuccessfulGuardedSetupStep(t *testing.T) {
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 
 	analyzed, err := app.Analyze(context.Background(), domain.AnalyzeRequest{LocalPath: repoPath})
 	if err != nil {
@@ -253,7 +274,7 @@ func TestExecutePersistsFailedGuardedSetupStep(t *testing.T) {
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 
 	analyzed, err := app.Analyze(context.Background(), domain.AnalyzeRequest{LocalPath: repoPath})
 	if err != nil {
@@ -312,7 +333,7 @@ func main() {
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 	events := make([]ExecutionEvent, 0, 4)
 
 	resp, err := app.ExecuteWithEvents(context.Background(), domain.ExecuteRequest{
@@ -359,7 +380,7 @@ func TestExecuteReusesSetupSessionForSameRepoGuardedActions(t *testing.T) {
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 
 	analyzed, err := app.Analyze(context.Background(), domain.AnalyzeRequest{LocalPath: repoPath})
 	if err != nil {
@@ -399,7 +420,7 @@ func TestSaveRawEnvPersistsGuardedSetupStepWithoutRawEnvContent(t *testing.T) {
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 	rawEnv := "OPENAI_API_KEY=raw-secret\nDATABASE_URL=postgres://user:pass@localhost:5432/app\n"
 
 	resp, err := app.SaveRawEnv(context.Background(), repoPath, rawEnv)
@@ -447,7 +468,7 @@ func TestSaveRawEnvFailurePersistsFailedGuardedSetupStepWithoutRawEnvContent(t *
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 	rawEnv := "OPENAI_API_KEY=raw-secret\n"
 
 	_, err := app.SaveRawEnv(context.Background(), repoPath, rawEnv)
@@ -486,7 +507,7 @@ func TestSaveEnvValuesPersistsGuardedSetupStepWithoutSecretValues(t *testing.T) 
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 
 	resp, err := app.SaveEnvValues(context.Background(), repoPath, map[string]string{
 		"OPENAI_API_KEY": "value-secret",
@@ -527,7 +548,7 @@ func TestSaveEnvValuesFailurePersistsFailedGuardedSetupStepWithoutSecretValues(t
 	}
 
 	setupStore := &recordingInstalledRepoStore{}
-	app := NewAppServiceWithInstalledRepoStore(setupStore)
+	app := newInstalledRepoTestApp(setupStore)
 
 	_, err := app.SaveEnvValues(context.Background(), repoPath, map[string]string{
 		"OPENAI_API_KEY": "value-secret",

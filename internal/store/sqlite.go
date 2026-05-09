@@ -194,6 +194,31 @@ WHERE local_path = ?;
 	return repo, nil
 }
 
+func (s *SQLiteStore) InstalledRepos(ctx context.Context) ([]domain.InstalledRepo, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at
+FROM installed_repos
+ORDER BY last_analyzed_at DESC, updated_at DESC, id DESC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query installed repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []domain.InstalledRepo
+	for rows.Next() {
+		repo, err := scanInstalledRepo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan installed repo: %w", err)
+		}
+		repos = append(repos, repo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read installed repos: %w", err)
+	}
+	return repos, nil
+}
+
 func (s *SQLiteStore) InstalledRepoByID(ctx context.Context, id int64) (domain.InstalledRepo, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at
