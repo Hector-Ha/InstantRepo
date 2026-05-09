@@ -1,3 +1,5 @@
+import { ClonePreflight as runClonePreflight } from "./desktopApi";
+
 export type ClonePreflightAction =
   | "clone"
   | "clone-with-attention"
@@ -53,27 +55,8 @@ interface ClonePreflightPlanOptions {
   forceClone?: boolean;
 }
 
-declare global {
-  interface Window {
-    go?: {
-      main?: {
-        App?: {
-          ClonePreflight?: (
-            repoURL: string,
-            destinationRoot: string,
-          ) => Promise<ClonePreflightResponse>;
-        };
-      };
-    };
-  }
-}
-
 export function clonePreflight(repoURL: string, destinationRoot: string) {
-  const preflight = window.go?.main?.App?.ClonePreflight;
-  if (!preflight) {
-    throw new Error("Clone preflight is not available in this desktop session.");
-  }
-  return preflight(repoURL, destinationRoot);
+  return runClonePreflight(repoURL, destinationRoot);
 }
 
 export function planClonePreflightFlow(

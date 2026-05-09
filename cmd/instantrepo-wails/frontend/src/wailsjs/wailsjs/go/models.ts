@@ -1,14 +1,14 @@
 export namespace domain {
-
+	
 	export class SafetyFinding {
 	    severity: string;
 	    summary: string;
 	    filePath?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SafetyFinding(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.severity = source["severity"];
@@ -19,17 +19,17 @@ export namespace domain {
 	export class SafetyReport {
 	    riskLevel: string;
 	    findings: SafetyFinding[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SafetyReport(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.riskLevel = source["riskLevel"];
 	        this.findings = this.convertValues(source["findings"], SafetyFinding);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -53,11 +53,11 @@ export namespace domain {
 	    requiredVersion: string;
 	    installedVersion?: string;
 	    status: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RequirementGap(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tool = source["tool"];
@@ -77,11 +77,11 @@ export namespace domain {
 	    steps: ExecutionStep[];
 	    safety: SafetyReport;
 	    unknowns: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SetupPlan(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectName = source["projectName"];
@@ -95,7 +95,7 @@ export namespace domain {
 	        this.safety = this.convertValues(source["safety"], SafetyReport);
 	        this.unknowns = source["unknowns"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -119,11 +119,11 @@ export namespace domain {
 	    path?: string;
 	    version?: string;
 	    available: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DetectedTool(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -136,18 +136,18 @@ export namespace domain {
 	    os: string;
 	    arch: string;
 	    tools: DetectedTool[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EnvironmentReport(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.os = source["os"];
 	        this.arch = source["arch"];
 	        this.tools = this.convertValues(source["tools"], DetectedTool);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -179,11 +179,11 @@ export namespace domain {
 	    confirmedBy?: string[];
 	    confidence: number;
 	    reason: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExecutionStep(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -208,11 +208,11 @@ export namespace domain {
 	    status: string;
 	    details?: string;
 	    instructions?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServiceDependency(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -235,11 +235,11 @@ export namespace domain {
 	    targetDir?: string;
 	    suggestedValue?: string;
 	    instructions?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EnvVarRequirement(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -259,11 +259,11 @@ export namespace domain {
 	    targetPath?: string;
 	    targetExists: boolean;
 	    variables: EnvVarRequirement[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EnvironmentConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.templatePath = source["templatePath"];
@@ -271,7 +271,7 @@ export namespace domain {
 	        this.targetExists = source["targetExists"];
 	        this.variables = this.convertValues(source["variables"], EnvVarRequirement);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -295,11 +295,11 @@ export namespace domain {
 	    versionConstraint: string;
 	    source: string;
 	    required: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ToolRequirement(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tool = source["tool"];
@@ -319,11 +319,11 @@ export namespace domain {
 	    services: ServiceDependency[];
 	    steps: ExecutionStep[];
 	    unknowns: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepositoryAnalysis(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectName = source["projectName"];
@@ -337,7 +337,7 @@ export namespace domain {
 	        this.steps = this.convertValues(source["steps"], ExecutionStep);
 	        this.unknowns = source["unknowns"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -360,11 +360,11 @@ export namespace domain {
 	    type: string;
 	    repoUrl?: string;
 	    path: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoSource(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.type = source["type"];
@@ -377,11 +377,11 @@ export namespace domain {
 	    analysis: RepositoryAnalysis;
 	    environment: EnvironmentReport;
 	    plan: SetupPlan;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AnalyzeResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.source = this.convertValues(source["source"], RepoSource);
@@ -389,7 +389,7 @@ export namespace domain {
 	        this.environment = this.convertValues(source["environment"], EnvironmentReport);
 	        this.plan = this.convertValues(source["plan"], SetupPlan);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -412,11 +412,11 @@ export namespace domain {
 	    status: string;
 	    freeBytes?: number;
 	    reason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CloneDiskStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.status = source["status"];
@@ -427,11 +427,11 @@ export namespace domain {
 	export class ClonePreflightMessage {
 	    severity: string;
 	    text: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClonePreflightMessage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.severity = source["severity"];
@@ -450,11 +450,11 @@ export namespace domain {
 	    updatedAt: any;
 	    // Go type: time
 	    lastAnalyzedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new InstalledRepo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -466,7 +466,7 @@ export namespace domain {
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.lastAnalyzedAt = this.convertValues(source["lastAnalyzedAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -499,11 +499,11 @@ export namespace domain {
 	    disk: CloneDiskStatus;
 	    recommendedAction: string;
 	    messages: ClonePreflightMessage[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClonePreflightResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.repoUrl = source["repoUrl"];
@@ -520,7 +520,7 @@ export namespace domain {
 	        this.recommendedAction = source["recommendedAction"];
 	        this.messages = this.convertValues(source["messages"], ClonePreflightMessage);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -539,10 +539,10 @@ export namespace domain {
 		    return a;
 		}
 	}
-
-
-
-
+	
+	
+	
+	
 	export class ExecutionResult {
 	    stepId: string;
 	    command: string;
@@ -553,11 +553,11 @@ export namespace domain {
 	    stderr: string;
 	    duration: string;
 	    succeeded: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExecutionResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stepId = source["stepId"];
@@ -577,11 +577,11 @@ export namespace domain {
 	    environment: EnvironmentReport;
 	    plan: SetupPlan;
 	    result: ExecutionResult;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExecuteResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.source = this.convertValues(source["source"], RepoSource);
@@ -590,7 +590,7 @@ export namespace domain {
 	        this.plan = this.convertValues(source["plan"], SetupPlan);
 	        this.result = this.convertValues(source["result"], ExecutionResult);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -609,9 +609,9 @@ export namespace domain {
 		    return a;
 		}
 	}
-
-
-
+	
+	
+	
 	export class SetupSessionSummary {
 	    id: number;
 	    installedRepoId: number;
@@ -621,11 +621,11 @@ export namespace domain {
 	    createdAt: any;
 	    // Go type: time
 	    updatedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SetupSessionSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -635,7 +635,7 @@ export namespace domain {
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -665,11 +665,11 @@ export namespace domain {
 	    lastSetupAt: any;
 	    // Go type: time
 	    lastActivityAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new InstalledRepoSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -680,7 +680,7 @@ export namespace domain {
 	        this.lastSetupAt = this.convertValues(source["lastSetupAt"], null);
 	        this.lastActivityAt = this.convertValues(source["lastActivityAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -702,17 +702,17 @@ export namespace domain {
 	export class InstalledRepoDetailsResponse {
 	    repo: InstalledRepoSummary;
 	    setupSessions: SetupSessionSummary[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new InstalledRepoDetailsResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.repo = this.convertValues(source["repo"], InstalledRepoSummary);
 	        this.setupSessions = this.convertValues(source["setupSessions"], SetupSessionSummary);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -733,16 +733,16 @@ export namespace domain {
 	}
 	export class InstalledRepoManagerResponse {
 	    repos: InstalledRepoSummary[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new InstalledRepoManagerResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.repos = this.convertValues(source["repos"], InstalledRepoSummary);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -761,7 +761,7 @@ export namespace domain {
 		    return a;
 		}
 	}
-
+	
 	export class RepoDiagnosticAIReviewEntryMetadata {
 	    id: number;
 	    commandHash?: string;
@@ -769,11 +769,11 @@ export namespace domain {
 	    confidence?: number;
 	    // Go type: time
 	    createdAt?: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticAIReviewEntryMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -782,7 +782,7 @@ export namespace domain {
 	        this.confidence = source["confidence"];
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -804,17 +804,17 @@ export namespace domain {
 	export class RepoDiagnosticAIReviewMetadata {
 	    available: boolean;
 	    entries: RepoDiagnosticAIReviewEntryMetadata[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticAIReviewMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.available = source["available"];
 	        this.entries = this.convertValues(source["entries"], RepoDiagnosticAIReviewEntryMetadata);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -841,11 +841,11 @@ export namespace domain {
 	    currentStatus: string;
 	    service?: string;
 	    targetDir?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticEnvVar(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -866,11 +866,11 @@ export namespace domain {
 	    envVariables: RepoDiagnosticEnvVar[];
 	    services: ServiceDependency[];
 	    unknowns: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticAnalysisSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectName = source["projectName"];
@@ -882,7 +882,7 @@ export namespace domain {
 	        this.services = this.convertValues(source["services"], ServiceDependency);
 	        this.unknowns = source["unknowns"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -904,34 +904,34 @@ export namespace domain {
 	export class RepoDiagnosticAppInfo {
 	    name: string;
 	    version: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticAppInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.version = source["version"];
 	    }
 	}
-
+	
 	export class RepoDiagnosticEnvironment {
 	    os: string;
 	    arch: string;
 	    tools: DetectedTool[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticEnvironment(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.os = source["os"];
 	        this.arch = source["arch"];
 	        this.tools = this.convertValues(source["tools"], DetectedTool);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -970,11 +970,11 @@ export namespace domain {
 	    createdAt: any;
 	    // Go type: time
 	    updatedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticStep(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -993,7 +993,7 @@ export namespace domain {
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1022,11 +1022,11 @@ export namespace domain {
 	    // Go type: time
 	    updatedAt: any;
 	    steps: RepoDiagnosticStep[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticSetupSession(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1037,7 +1037,7 @@ export namespace domain {
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.steps = this.convertValues(source["steps"], RepoDiagnosticStep);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1067,11 +1067,11 @@ export namespace domain {
 	    evidenceSource?: string;
 	    confidence: number;
 	    reason: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticPlanStep(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1097,11 +1097,11 @@ export namespace domain {
 	    steps: RepoDiagnosticPlanStep[];
 	    safety: SafetyReport;
 	    unknowns: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticSetupPlanSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectName = source["projectName"];
@@ -1115,7 +1115,7 @@ export namespace domain {
 	        this.safety = this.convertValues(source["safety"], SafetyReport);
 	        this.unknowns = source["unknowns"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1146,11 +1146,11 @@ export namespace domain {
 	    updatedAt: any;
 	    // Go type: time
 	    lastAnalyzedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticRepoIdentity(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1162,7 +1162,7 @@ export namespace domain {
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.lastAnalyzedAt = this.convertValues(source["lastAnalyzedAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1192,11 +1192,11 @@ export namespace domain {
 	    setupPlan: RepoDiagnosticSetupPlanSummary;
 	    setupSessions: RepoDiagnosticSetupSession[];
 	    aiReview: RepoDiagnosticAIReviewMetadata;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RepoDiagnosticExport(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.schemaVersion = source["schemaVersion"];
@@ -1209,7 +1209,7 @@ export namespace domain {
 	        this.setupSessions = this.convertValues(source["setupSessions"], RepoDiagnosticSetupSession);
 	        this.aiReview = this.convertValues(source["aiReview"], RepoDiagnosticAIReviewMetadata);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1228,19 +1228,19 @@ export namespace domain {
 		    return a;
 		}
 	}
-
-
-
-
-
-
-
-
-
-
-
-
-
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 
 }
 

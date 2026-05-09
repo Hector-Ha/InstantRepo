@@ -8,7 +8,7 @@ import {
   ListInstalledRepos,
   OpenDirectory,
   SaveEnvFile,
-} from "./wailsjs/wailsjs/go/main/App";
+} from "./desktopApi";
 import type {
   ActivityEntry,
   AnalyzeSnapshot,
@@ -20,6 +20,7 @@ import type {
   StepStatus,
 } from "./types";
 import { redactLikelySecrets } from "./redaction";
+import { getMissingRequiredTools, getSafetyAttention } from "./attention";
 import {
   clonePreflight,
   planClonePreflightFlow,
@@ -423,7 +424,12 @@ export default function App() {
   );
 
   const missingTools = useMemo(
-    () => snapshot?.environment.tools.filter((tool) => !tool.available) ?? [],
+    () => getMissingRequiredTools(snapshot),
+    [snapshot],
+  );
+
+  const safetyFindings = useMemo(
+    () => getSafetyAttention(snapshot),
     [snapshot],
   );
 
@@ -992,8 +998,8 @@ export default function App() {
                 <h3>Attention Needed</h3>
                 <ul className="plain-list">
                   {missingTools.map((tool) => (
-                    <li key={tool.name}>
-                      Missing tool: <strong>{tool.name}</strong>
+                    <li key={tool.tool}>
+                      Missing tool: <strong>{tool.tool}</strong>
                     </li>
                   ))}
                   {unresolvedEnv.map((item) => (
@@ -1001,7 +1007,15 @@ export default function App() {
                       Required secret: <strong>{item.name}</strong>
                     </li>
                   ))}
-                  {missingTools.length === 0 && unresolvedEnv.length === 0 ? (
+                  {safetyFindings.map((finding) => (
+                    <li key={`${finding.summary}-${finding.filePath ?? ""}`}>
+                      Safety: <strong>{finding.summary}</strong>
+                      {finding.filePath ? ` (${finding.filePath})` : ""}
+                    </li>
+                  ))}
+                  {missingTools.length === 0 &&
+                  unresolvedEnv.length === 0 &&
+                  safetyFindings.length === 0 ? (
                     <li>No immediate blockers detected.</li>
                   ) : null}
                 </ul>
