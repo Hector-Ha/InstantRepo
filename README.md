@@ -25,6 +25,18 @@ It have three faces:
 - Classify setup steps as `required`, `recommended`, `optional`, `manual`, or `uncertain`.
 - Execute one approved step at a time.
 
+## Env Draft Direction
+
+`.env` setup is core product work. Current app can draft or update env files with safe defaults, while keeping existing values. Next track expands this into catalog-driven Env Drafts:
+
+- App Topology first: detect frontend, backend, workers, databases, caches, and providers before guessing URLs or ports.
+- Env Default Catalog: classify dev defaults, generated local secrets, service credentials, and provider config through app-shipped rules.
+- User Env Vault: store approved service credentials in OS credential store, never in repo metadata.
+- Multi-target Save All: handle root, client, server, and weird local `.env*` files in one view.
+- AI Env Review: when enabled, review low-confidence non-secret defaults through bounded context, not raw secrets or full repo files.
+
+See `CONTEXT.md` and `docs/adr/0002-use-catalog-driven-env-drafts.md` for the product rules.
+
 ## Project Shape
 
 ```text
@@ -154,11 +166,26 @@ InstantRepo trust stronger evidence first:
 
 README commands can help, but do not beat manifest-backed commands.
 
+## Active Roadmap
+
+Env Draft foundation is tracked in GitHub Issues:
+
+1. [#15 PRD: Catalog-driven Env Drafts and Vault-backed Credentials](https://github.com/Hector-Ha/InstantRepo/issues/15)
+2. [#16 Env Draft model + safe Save All](https://github.com/Hector-Ha/InstantRepo/issues/16)
+3. [#17 Env target inference](https://github.com/Hector-Ha/InstantRepo/issues/17)
+4. [#18 Env Default Catalog](https://github.com/Hector-Ha/InstantRepo/issues/18)
+5. [#19 App Topology + allocator](https://github.com/Hector-Ha/InstantRepo/issues/19)
+6. [#20 Structured Env UI](https://github.com/Hector-Ha/InstantRepo/issues/20)
+7. [#21 User Env Vault backend](https://github.com/Hector-Ha/InstantRepo/issues/21)
+8. [#22 Env Vault Manager](https://github.com/Hector-Ha/InstantRepo/issues/22)
+9. [#23 Env Pattern Contribution](https://github.com/Hector-Ha/InstantRepo/issues/23)
+10. [#24 AI Env Review + Env Patch](https://github.com/Hector-Ha/InstantRepo/issues/24)
+
 ## Next Work
 
 - Stream live logs while step runs.
 - Improve version match logic.
-- Add monorepo support.
-- Add more manifests and package managers.
+- Build Env Draft foundation from the active roadmap.
+- Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.
 - Add optional reputation scan for risky files.

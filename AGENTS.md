@@ -26,6 +26,37 @@ Use default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `rea
 
 Single-context repo: root `CONTEXT.md`, future ADRs in `docs/adr/`. See `docs/agents/domain.md`.
 
+### Skill workflow
+
+- Use `triage` when changing issue state or preparing an issue for human/agent work.
+- Use `to-prd` only when turning a new discussion into a PRD issue.
+- Use `to-issues` only after PRD/plan is clear enough for implementation slices.
+- Use `tdd` when implementing issue work or fixing a bug.
+- Use `handoff` before stopping long work that another agent must continue.
+- Use `caveman-commit` for commit messages.
+
+## Active Env Draft Track
+
+Env Draft foundation is main current roadmap. Read `CONTEXT.md` and `docs/adr/0002-use-catalog-driven-env-drafts.md` before touching it.
+
+Parent PRD:
+
+- `#15` Catalog-driven Env Drafts and Vault-backed Credentials.
+
+Implementation order:
+
+1. `#16` Build structured Env Draft model with provenance and safe Save All.
+2. `#17` Infer local env targets from env files and code usage.
+3. `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults.
+4. `#19` Detect App Topology and allocate coherent local dev values.
+5. `#20` Ship structured Env Draft UI with grouped targets and raw vault tags.
+6. `#21` Add User Env Vault backend with OS credential storage and approvals.
+7. `#22` Build Env Vault Manager for credentials, usage, and action-needed states.
+8. `#23` Add Env Pattern Contribution settings, public filtering, and offline queue.
+9. `#24` Add AI Env Review Bundle and Env Patch validation.
+
+Do not skip dependencies unless maintainer says so. Each issue is meant as vertical slice, but issue `#20`, `#22`, `#23`, and `#24` depend on earlier domain/backend foundation.
+
 ## Package Manager
 
 - Bun good. Use `bun`.
@@ -136,6 +167,10 @@ This app inspects and can run code from unknown repos. Be careful.
 - Treat scripts, installers, binaries, and shell files as risky evidence.
 - Preserve existing `.env` values. Never print secrets.
 - Do not write real secret values into docs or tests.
+- Do not store service credential values in SQLite, logs, issues, PRs, diagnostics, or docs.
+- Env Default Catalog rules are data-only. Do not add rule behavior that runs commands or bypasses approval gates.
+- AI Env Review must use bounded context and structured Env Patch; never send raw secrets, vault values, full `.env` files, or full source files by default.
+- Source Fix Suggestions for env loader paths are informational in foundation; do not auto-edit source for that flow.
 - Unknown public repos should be tested in disposable machine or VM.
 
 ## Docs
@@ -143,6 +178,7 @@ This app inspects and can run code from unknown repos. Be careful.
 - README is for humans. Keep it short and useful.
 - AGENTS.md is for agents. Keep exact commands and project rules.
 - Use caveman talk in project docs unless user asks otherwise.
+- When Env Draft rules change, update `CONTEXT.md`; update ADR only for hard-to-reverse architectural choices.
 
 ## PR / Commit
 
