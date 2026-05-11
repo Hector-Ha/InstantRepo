@@ -352,10 +352,17 @@ type SetupPlan struct {
 }
 
 type EnvironmentConfig struct {
-	TemplatePath string              `json:"templatePath,omitempty"`
-	TargetPath   string              `json:"targetPath,omitempty"`
-	TargetExists bool                `json:"targetExists"`
-	Variables    []EnvVarRequirement `json:"variables"`
+	TemplatePath         string                `json:"templatePath,omitempty"`
+	TargetPath           string                `json:"targetPath,omitempty"`
+	TargetExists         bool                  `json:"targetExists"`
+	Variables            []EnvVarRequirement   `json:"variables"`
+	SourceFixSuggestions []SourceFixSuggestion `json:"sourceFixSuggestions,omitempty"`
+}
+
+type SourceFixSuggestion struct {
+	FilePath      string `json:"filePath"`
+	Summary       string `json:"summary"`
+	SuggestedText string `json:"suggestedText"`
 }
 
 type EnvVarRequirement struct {
@@ -363,6 +370,7 @@ type EnvVarRequirement struct {
 	Source         string   `json:"source"`
 	Required       bool     `json:"required"`
 	Secret         bool     `json:"secret"`
+	Confidence     float64  `json:"confidence,omitempty"`
 	CurrentStatus  string   `json:"currentStatus"`
 	FillStrategy   string   `json:"fillStrategy"`
 	Service        string   `json:"service,omitempty"`

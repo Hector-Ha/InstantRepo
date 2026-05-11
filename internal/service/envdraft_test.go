@@ -100,6 +100,45 @@ func TestBuildEnvDraftRepresentsTwoTargetFiles(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDraftRejectsEvidenceOnlyVarsWithoutWriteTarget(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	_, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "DATABASE_URL", Source: ".env.production"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected BuildDraft to reject evidence-only vars without a write target")
+	}
+}
+
+func TestBuildEnvDraftUsesEnvRequirementConfidence(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "APP_URL", TargetDir: repoPath, Confidence: 0.45},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "APP_URL")
+	if value.Confidence != 0.45 {
+		t.Fatalf("expected confidence 0.45, got %v", value.Confidence)
+	}
+}
+
 func TestSaveAllUpdatesExistingAssignmentsAndAppendsNewValues(t *testing.T) {
 	repoPath := t.TempDir()
 	targetPath := filepath.Join(repoPath, ".env")

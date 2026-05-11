@@ -27,6 +27,9 @@ func (m *EnvDraftManager) BuildDraft(analysis domain.RepositoryAnalysis) (domain
 	}
 
 	targetPaths, varsByTarget := envDraftTargets(analysis)
+	if len(targetPaths) == 0 {
+		return domain.EnvDraft{}, fmt.Errorf("env target path is not available")
+	}
 	draft := domain.EnvDraft{RepoPath: analysis.RepoPath}
 	for _, targetPath := range targetPaths {
 		target, err := buildEnvDraftTarget(analysis.RepoPath, targetPath, varsByTarget[targetPath])
@@ -200,11 +203,15 @@ func buildEnvDraftTarget(repoPath, targetPath string, vars []domain.EnvVarRequir
 		OriginalContent: original,
 	}
 	for _, item := range vars {
+		confidence := item.Confidence
+		if confidence == 0 {
+			confidence = 0.5
+		}
 		value := domain.EnvDraftValue{
 			Name:       item.Name,
 			Value:      item.SuggestedValue,
 			Secret:     item.Secret,
-			Confidence: 0.5,
+			Confidence: confidence,
 			Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceDraft},
 		}
 		if existing, ok := valuesByName[item.Name]; ok && strings.TrimSpace(existing) != "" {
@@ -288,7 +295,7 @@ func envDraftTargets(analysis domain.RepositoryAnalysis) ([]string, map[string][
 			targetPath = filepath.Join(item.TargetDir, ".env")
 		}
 		if strings.TrimSpace(targetPath) == "" {
-			targetPath = filepath.Join(analysis.RepoPath, ".env")
+			continue
 		}
 		if _, ok := varsByTarget[targetPath]; !ok {
 			paths = append(paths, targetPath)
@@ -298,7 +305,7 @@ func envDraftTargets(analysis domain.RepositoryAnalysis) ([]string, map[string][
 	if len(paths) == 0 {
 		targetPath := analysis.Env.TargetPath
 		if strings.TrimSpace(targetPath) == "" {
-			targetPath = filepath.Join(analysis.RepoPath, ".env")
+			return paths, varsByTarget
 		}
 		paths = append(paths, targetPath)
 		varsByTarget[targetPath] = nil

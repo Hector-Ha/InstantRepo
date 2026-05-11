@@ -16,10 +16,25 @@ var (
 	envAssignmentPattern = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
 
 	// Code scanner patterns
-	jsEnvPattern = regexp.MustCompile(`process\.env\.([A-Za-z_][A-Za-z0-9_]*)`)
-	goEnvPattern = regexp.MustCompile(`os\.Getenv\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)`)
-	pyEnvPattern = regexp.MustCompile(`os\.(?:environ\.get|getenv)\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)|os\.environ\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]`)
+	jsEnvPattern        = regexp.MustCompile(`process\.env\.([A-Za-z_][A-Za-z0-9_]*)`)
+	goEnvPattern        = regexp.MustCompile(`os\.Getenv\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)`)
+	pyEnvPattern        = regexp.MustCompile(`os\.(?:environ\.get|getenv)\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)|os\.environ\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]`)
+	jsDotenvPathPattern = regexp.MustCompile(`(?:dotenv\.)?config\s*\(\s*\{[^}]*path\s*:\s*['"]([^'"]+)['"]`)
 )
+
+type envFileRole string
+
+const (
+	envFileRoleLocal    envFileRole = "local"
+	envFileRoleTemplate envFileRole = "template"
+	envFileRoleNonLocal envFileRole = "non_local"
+)
+
+type envFileFinding struct {
+	Path       string
+	Role       envFileRole
+	Confidence float64
+}
 
 func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAnalysis) {
 	if analysis == nil {
@@ -76,48 +91,46 @@ func detectRuntimeContext(repoPath string) runtimeContext {
 		Variables: []domain.EnvVarRequirement{},
 	}
 
-	templates := findAllTemplates(repoPath, []string{
-		".env.example",
-		".env.sample",
-		".env.template",
-		".env.local.example",
-		".env.development.example",
-	})
+	envFiles := findEnvFiles(repoPath)
+	for _, envFile := range envFiles {
+		targetDir := filepath.Dir(envFile.Path)
+		targetPath := filepath.Join(targetDir, ".env")
+		vars := parseEnvTemplate(envFile.Path)
+		for i := range vars {
+			vars[i].Confidence = envFile.Confidence
+			if envFile.Role != envFileRoleNonLocal {
+				vars[i].TargetDir = targetDir
+			}
+		}
 
-	if len(templates) > 0 {
-		envConfig.TargetExists = false
-		for _, templatePath := range templates {
-			targetDir := filepath.Dir(templatePath)
-			targetPath := filepath.Join(targetDir, ".env")
-
+		switch envFile.Role {
+		case envFileRoleLocal, envFileRoleTemplate:
 			if envConfig.TargetPath == "" {
-				envConfig.TemplatePath = templatePath
+				envConfig.TemplatePath = envFile.Path
 				envConfig.TargetPath = targetPath
 			}
-
 			if util.FileExists(targetPath) {
 				envConfig.TargetExists = true
 			}
-
-			vars := parseEnvTemplate(templatePath)
-			for i := range vars {
-				vars[i].TargetDir = targetDir
-			}
-
-			envConfig.Variables = mergeEnvVars(envConfig.Variables, vars)
-			evidence = append(evidence, filepath.Base(templatePath)+" found in "+targetDir)
+			evidence = append(evidence, filepath.Base(envFile.Path)+" found in "+targetDir)
+		case envFileRoleNonLocal:
+			evidence = append(evidence, filepath.Base(envFile.Path)+" used as env evidence only")
 		}
+
+		envConfig.Variables = mergeEnvVars(envConfig.Variables, vars)
 	}
 
-	codeScannedVars, inferredTargetDir := scanCodeForEnvVars(repoPath)
+	codeScannedVars, inferredTargetDir, sourceFixes, codeUnknowns := scanCodeForEnvVars(repoPath)
 	if len(codeScannedVars) > 0 {
-		if envConfig.TargetPath == "" {
+		if envConfig.TargetPath == "" && inferredTargetDir != "" {
 			envConfig.TargetPath = filepath.Join(inferredTargetDir, ".env")
 			envConfig.TargetExists = util.FileExists(envConfig.TargetPath)
 		}
 		envConfig.Variables = mergeEnvVars(envConfig.Variables, codeScannedVars)
 		evidence = append(evidence, "Environment variables inferred from source code scan")
 	}
+	envConfig.SourceFixSuggestions = append(envConfig.SourceFixSuggestions, sourceFixes...)
+	unknowns = append(unknowns, codeUnknowns...)
 
 	composePath := findFirstExisting(repoPath, []string{
 		"docker-compose.yml",
@@ -262,18 +275,23 @@ func mergeEnvVars(existing, incoming []domain.EnvVarRequirement) []domain.EnvVar
 
 	seen := make(map[string]bool, len(existing))
 	for _, item := range existing {
-		seen[item.Name] = true
+		seen[envVarMergeKey(item)] = true
 	}
 
 	for _, item := range incoming {
-		if seen[item.Name] {
+		key := envVarMergeKey(item)
+		if seen[key] {
 			continue
 		}
-		seen[item.Name] = true
+		seen[key] = true
 		existing = append(existing, item)
 	}
 
 	return existing
+}
+
+func envVarMergeKey(item domain.EnvVarRequirement) string {
+	return item.Name + "\x00" + item.TargetDir
 }
 
 func findAllTemplates(repoPath string, candidates []string) []string {
@@ -300,6 +318,67 @@ func findAllTemplates(repoPath string, candidates []string) []string {
 		return nil
 	})
 	return matches
+}
+
+func findEnvFiles(repoPath string) []envFileFinding {
+	var matches []envFileFinding
+	_ = filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "node_modules" || name == ".git" || name == "vendor" || name == "build" || name == "dist" || name == ".next" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		name := d.Name()
+		if !strings.HasPrefix(name, ".env") {
+			return nil
+		}
+		matches = append(matches, envFileFinding{
+			Path:       path,
+			Role:       classifyEnvFileRole(name),
+			Confidence: envFileConfidence(name),
+		})
+		return nil
+	})
+	return matches
+}
+
+func classifyEnvFileRole(name string) envFileRole {
+	lowerName := strings.ToLower(name)
+	for _, marker := range []string{"production", "prod", "staging", "test", "ci"} {
+		if envFileNameHasMarker(lowerName, marker) {
+			return envFileRoleNonLocal
+		}
+	}
+	if strings.Contains(lowerName, "example") || strings.Contains(lowerName, "sample") || strings.Contains(lowerName, "template") {
+		return envFileRoleTemplate
+	}
+	return envFileRoleLocal
+}
+
+func envFileConfidence(name string) float64 {
+	switch strings.ToLower(name) {
+	case ".env", ".env.local", ".env.development", ".env.dev", ".env.example", ".env.sample", ".env.template", ".env.local.example", ".env.development.example":
+		return 0.9
+	default:
+		return 0.45
+	}
+}
+
+func envFileNameHasMarker(name, marker string) bool {
+	for _, part := range strings.FieldsFunc(name, func(r rune) bool {
+		return r == '.' || r == '-' || r == '_'
+	}) {
+		if part == marker {
+			return true
+		}
+	}
+	return false
 }
 
 func findFirstExisting(repoPath string, candidates []string) string {
@@ -375,7 +454,7 @@ func findNearestManifest(repoRoot, startDir string) string {
 	return repoRoot
 }
 
-func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
+func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []domain.SourceFixSuggestion, []string) {
 	seen := map[string]bool{
 		"NODE_ENV": true,
 		"PATH":     true,
@@ -388,6 +467,8 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
 
 	var variables []domain.EnvVarRequirement
 	targetPathVotes := make(map[string]int)
+	var sourceFixes []domain.SourceFixSuggestion
+	var unknowns []string
 
 	_ = filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -420,6 +501,16 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
 		if content == "" {
 			return nil
 		}
+		loaderTargetDir, hasUnsafeLoader := safeDotenvLoaderTargetDir(repoPath, content)
+		if hasUnsafeLoader {
+			relativeSource := relativeEnvSourcePath(repoPath, path)
+			sourceFixes = append(sourceFixes, domain.SourceFixSuggestion{
+				FilePath:      relativeSource,
+				Summary:       "Env loader path points outside the repo.",
+				SuggestedText: "Point dotenv loading at a repo-local env file such as ./.env.",
+			})
+			unknowns = append(unknowns, fmt.Sprintf("%s loads env from outside the repo; InstantRepo will not write that target", relativeSource))
+		}
 
 		matches := pattern.FindAllStringSubmatch(content, -1)
 		foundAny := false
@@ -438,29 +529,44 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
 			seen[name] = true
 			foundAny = true
 
-			manifestDir := findNearestManifest(repoPath, filepath.Dir(path))
+			targetDir := inferEnvUsageTargetDir(repoPath, path)
+			if loaderTargetDir != "" {
+				targetDir = loaderTargetDir
+			}
+			if hasUnsafeLoader {
+				targetDir = ""
+			}
 
 			variables = append(variables, domain.EnvVarRequirement{
 				Name:           name,
 				Source:         "code scan",
 				Required:       true,
 				Secret:         looksSensitiveEnvVar(name),
+				Confidence:     0.72,
 				CurrentStatus:  "missing",
 				FillStrategy:   "user_required",
-				TargetDir:      manifestDir,
+				TargetDir:      targetDir,
 				SuggestedValue: "",
 			})
 		}
 
 		if foundAny {
-			manifestDir := findNearestManifest(repoPath, filepath.Dir(path))
-			targetPathVotes[manifestDir] += len(matches)
+			targetDir := inferEnvUsageTargetDir(repoPath, path)
+			if loaderTargetDir != "" {
+				targetDir = loaderTargetDir
+			}
+			if hasUnsafeLoader {
+				targetDir = ""
+			}
+			if targetDir != "" {
+				targetPathVotes[targetDir] += len(matches)
+			}
 		}
 
 		return nil
 	})
 
-	bestTarget := repoPath
+	bestTarget := ""
 	maxVotes := -1
 	for dir, votes := range targetPathVotes {
 		if votes > maxVotes {
@@ -469,7 +575,69 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string) {
 		}
 	}
 
-	return variables, bestTarget
+	return variables, bestTarget, sourceFixes, unknowns
+}
+
+func safeDotenvLoaderTargetDir(repoRoot, content string) (string, bool) {
+	matches := jsDotenvPathPattern.FindStringSubmatch(content)
+	if len(matches) != 2 {
+		return "", false
+	}
+	loaderPath := filepath.Clean(matches[1])
+	if !filepath.IsAbs(loaderPath) {
+		loaderPath = filepath.Join(repoRoot, loaderPath)
+	}
+	if !pathInsideRepo(repoRoot, loaderPath) {
+		return "", true
+	}
+	return filepath.Dir(loaderPath), false
+}
+
+func relativeEnvSourcePath(repoRoot, sourcePath string) string {
+	relative, err := filepath.Rel(repoRoot, sourcePath)
+	if err != nil || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return filepath.Base(sourcePath)
+	}
+	return relative
+}
+
+func pathInsideRepo(repoRoot, path string) bool {
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return false
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(repoAbs, pathAbs)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+func inferEnvUsageTargetDir(repoRoot, sourcePath string) string {
+	sourceDir := filepath.Dir(sourcePath)
+	manifestDir := findNearestManifest(repoRoot, sourceDir)
+	if manifestDir != repoRoot {
+		return manifestDir
+	}
+
+	relative, err := filepath.Rel(repoRoot, sourcePath)
+	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return repoRoot
+	}
+	parts := strings.Split(filepath.Clean(relative), string(filepath.Separator))
+	if len(parts) < 2 {
+		return repoRoot
+	}
+	switch strings.ToLower(parts[0]) {
+	case "src", "lib", "pkg", "cmd", "internal":
+		return repoRoot
+	default:
+		return filepath.Join(repoRoot, parts[0])
+	}
 }
 
 func classifyEnvVar(input domain.EnvVarRequirement, existingValues map[string]string, localServices map[string]domain.ServiceDependency) domain.EnvVarRequirement {
