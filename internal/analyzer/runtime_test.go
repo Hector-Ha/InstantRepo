@@ -242,6 +242,28 @@ func TestAnalyzeReportsOutsideRepoDotenvLoaderWithoutOutsideTarget(t *testing.T)
 	}
 }
 
+func TestAnalyzeReportsAmbiguousFolderTopologyAsLowConfidence(t *testing.T) {
+	repoPath := t.TempDir()
+	webDir := filepath.Join(repoPath, "web")
+	apiDir := filepath.Join(repoPath, "api")
+
+	writeFile(t, filepath.Join(webDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(webDir, ".env.example"), "APP_URL=\n")
+	writeFile(t, filepath.Join(apiDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(apiDir, ".env.example"), "PORT=\n")
+
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	frontend := topologySignal(t, analysis.Topology, "frontend", webDir)
+	backend := topologySignal(t, analysis.Topology, "backend", apiDir)
+	if frontend.Confidence >= 0.5 || backend.Confidence >= 0.5 {
+		t.Fatalf("expected low-confidence folder topology, got frontend %+v backend %+v", frontend, backend)
+	}
+}
+
 func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -259,4 +281,15 @@ func envVarTargetDir(vars []domain.EnvVarRequirement, name string) string {
 		}
 	}
 	return ""
+}
+
+func topologySignal(t *testing.T, topology domain.AppTopology, kind, targetDir string) domain.AppTopologySignal {
+	t.Helper()
+	for _, signal := range topology.Signals {
+		if signal.Kind == kind && signal.TargetDir == targetDir {
+			return signal
+		}
+	}
+	t.Fatalf("expected topology signal %s %s in %+v", kind, targetDir, topology)
+	return domain.AppTopologySignal{}
 }

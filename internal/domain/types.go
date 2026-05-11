@@ -296,11 +296,26 @@ type RepositoryAnalysis struct {
 	RepoPath     string              `json:"repoPath"`
 	Confidence   float64             `json:"confidence"`
 	Evidence     []string            `json:"evidence"`
+	Topology     AppTopology         `json:"topology"`
 	Requirements []ToolRequirement   `json:"requirements"`
 	Env          EnvironmentConfig   `json:"env"`
 	Services     []ServiceDependency `json:"services"`
 	Steps        []ExecutionStep     `json:"steps"`
 	Unknowns     []string            `json:"unknowns"`
+}
+
+type AppTopology struct {
+	Signals []AppTopologySignal `json:"signals"`
+}
+
+type AppTopologySignal struct {
+	Kind       string  `json:"kind"`
+	TargetDir  string  `json:"targetDir,omitempty"`
+	Service    string  `json:"service,omitempty"`
+	Provider   string  `json:"provider,omitempty"`
+	Port       int     `json:"port,omitempty"`
+	Confidence float64 `json:"confidence"`
+	Evidence   string  `json:"evidence"`
 }
 
 type ToolRequirement struct {
@@ -366,17 +381,19 @@ type SourceFixSuggestion struct {
 }
 
 type EnvVarRequirement struct {
-	Name           string   `json:"name"`
-	Source         string   `json:"source"`
-	Required       bool     `json:"required"`
-	Secret         bool     `json:"secret"`
-	Confidence     float64  `json:"confidence,omitempty"`
-	CurrentStatus  string   `json:"currentStatus"`
-	FillStrategy   string   `json:"fillStrategy"`
-	Service        string   `json:"service,omitempty"`
-	TargetDir      string   `json:"targetDir,omitempty"`
-	SuggestedValue string   `json:"suggestedValue,omitempty"`
-	Instructions   []string `json:"instructions,omitempty"`
+	Name            string              `json:"name"`
+	Source          string              `json:"source"`
+	Required        bool                `json:"required"`
+	Secret          bool                `json:"secret"`
+	Confidence      float64             `json:"confidence,omitempty"`
+	CurrentStatus   string              `json:"currentStatus"`
+	FillStrategy    string              `json:"fillStrategy"`
+	Service         string              `json:"service,omitempty"`
+	TargetDir       string              `json:"targetDir,omitempty"`
+	SuggestedValue  string              `json:"suggestedValue,omitempty"`
+	Instructions    []string            `json:"instructions,omitempty"`
+	TopologySignals []AppTopologySignal `json:"-"`
+	ProjectName     string              `json:"-"`
 }
 
 const (
@@ -384,6 +401,7 @@ const (
 	EnvValueSourceTemplate        = "template"
 	EnvValueSourceDraft           = "draft"
 	EnvValueSourceCatalog         = "catalog"
+	EnvValueSourceAllocator       = "allocator"
 	EnvValueSourceGeneratedSecret = "generated_secret"
 )
 

@@ -69,6 +69,7 @@ func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAna
 			analysis.Unknowns = append(analysis.Unknowns, item)
 		}
 	}
+	analysis.Topology = detectAppTopology(analysis.RepoPath, analysis.Env, analysis.Services)
 }
 
 type runtimeContext struct {

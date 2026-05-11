@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,16 +20,20 @@ const envSaveAttempts = 3
 type EnvDraftManager struct {
 	writeEnvTarget   func(path string, content []byte) error
 	generateSecret   func() (string, error)
+	portAvailable    func(port int) bool
 	catalog          envcatalog.Catalog
 	generatedSecrets map[string]string
+	assignedPorts    map[string]int
 }
 
 func NewEnvDraftManager() *EnvDraftManager {
 	return &EnvDraftManager{
 		writeEnvTarget:   atomicWriteEnvTarget,
 		generateSecret:   generateEnvLocalSecret,
+		portAvailable:    isLocalPortAvailable,
 		catalog:          envcatalog.DefaultCatalog(),
 		generatedSecrets: map[string]string{},
+		assignedPorts:    map[string]int{},
 	}
 }
 
@@ -364,6 +370,8 @@ func (m *EnvDraftManager) buildEnvDraftTarget(repoPath, targetPath string, vars 
 				value.Provenance.Source = domain.EnvValueSourceCatalog
 			}
 		}
+		applyCloudDatastoreSuggestion(item, &value)
+		m.applyDevDefaultAllocation(repoPath, targetPath, item, &value)
 		if existing, ok := valuesByName[item.Name]; ok && strings.TrimSpace(existing) != "" && !shouldReplaceExistingEnvValue(value, existing) {
 			value.Value = existing
 			value.Confidence = 1
@@ -376,6 +384,264 @@ func (m *EnvDraftManager) buildEnvDraftTarget(repoPath, targetPath string, vars 
 	}
 
 	return target, nil
+}
+
+func applyCloudDatastoreSuggestion(item domain.EnvVarRequirement, value *domain.EnvDraftValue) {
+	if value == nil {
+		return
+	}
+	lower := strings.ToLower(item.SuggestedValue)
+	name := strings.ToUpper(strings.TrimSpace(item.Name))
+	if strings.Contains(lower, "mongodb+srv://") || strings.Contains(lower, "atlas") || (name == "MONGODB_URI" && hasTopologyServiceSignal(item, "mongodb")) {
+		value.Value = ""
+		value.ValueClass = domain.EnvValueClassProviderConfig
+		value.Instructions = append(value.Instructions, "Cloud MongoDB hint detected. Leave blank unless you have the real Atlas connection string.")
+		value.Instructions = append(value.Instructions, "Local suggestion: mongodb://localhost:27017/"+envDatabaseName(item.ProjectName, ""))
+		value.Attention = append(value.Attention, "Cloud datastore hint found; InstantRepo left the value blank and added a local suggestion.")
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if strings.Contains(name, "SUPABASE") || strings.Contains(name, "FIREBASE") {
+		value.Value = ""
+		value.Instructions = append(value.Instructions, "Local datastore suggestion: postgres://postgres:postgres@localhost:5432/"+envDatabaseName(item.ProjectName, ""))
+		value.Attention = append(value.Attention, "Cloud provider datastore hint found; InstantRepo left the value blank.")
+	}
+}
+
+func (m *EnvDraftManager) applyDevDefaultAllocation(repoPath, targetPath string, item domain.EnvVarRequirement, value *domain.EnvDraftValue) {
+	if value == nil {
+		return
+	}
+	name := strings.ToUpper(strings.TrimSpace(item.Name))
+	targetDir := item.TargetDir
+	if targetDir == "" {
+		targetDir = filepath.Dir(targetPath)
+	}
+	if isBackendPortEnv(name) && hasTopologySignalForDir(item, "backend") {
+		port := m.assignedPortFromEvidence(repoPath, targetDir, "backend", 8080, item.SuggestedValue, value)
+		value.Value = strconv.Itoa(port)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, topologyConfidenceForItem(item, "backend"))
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if isBackendPortEnv(name) && hasTopologySignalForDir(item, "fullstack") {
+		port := m.assignedPortFromEvidence(repoPath, targetDir, "app", 3000, item.SuggestedValue, value)
+		value.Value = strconv.Itoa(port)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, topologyConfidenceForItem(item, "fullstack"))
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if isAppURLEnv(name) && hasTopologySignalForDir(item, "fullstack") {
+		port := m.assignedPortFromTargetEvidence(repoPath, targetDir, "app", 3000, item.TopologySignals, value)
+		value.Value = "http://localhost:" + strconv.Itoa(port)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, topologyConfidenceForItem(item, "fullstack"))
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if isFrontendAPIURLEnv(name) {
+		if backendDir, ok := backendTargetDir(item); ok {
+			port := m.assignedPort(repoPath, backendDir, "backend", 8080, false)
+			value.Value = "http://localhost:" + strconv.Itoa(port)
+			value.ValueClass = domain.EnvValueClassDevDefault
+			value.Confidence = maxConfidence(value.Confidence, 0.82)
+			value.Provenance.Source = domain.EnvValueSourceAllocator
+			return
+		}
+	}
+	if isDatabaseURLEnv(name) && hasTopologyServiceSignal(item, "postgres") {
+		value.Value = "postgres://postgres:postgres@localhost:5432/" + envDatabaseName(item.ProjectName, repoPath)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, 0.86)
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if name == "REDIS_URL" && hasTopologyServiceSignal(item, "redis") {
+		port := m.assignedPort(repoPath, "redis", "redis", 6379, true)
+		value.Value = "redis://localhost:" + strconv.Itoa(port)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, 0.86)
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+	}
+}
+
+func (m *EnvDraftManager) assignedPortFromTargetEvidence(repoPath, targetDir, purpose string, preferred int, signals []domain.AppTopologySignal, value *domain.EnvDraftValue) int {
+	exact := ""
+	for _, signal := range signals {
+		if signal.TargetDir == targetDir && signal.Port > 0 {
+			exact = strconv.Itoa(signal.Port)
+			break
+		}
+	}
+	return m.assignedPortFromEvidence(repoPath, targetDir, purpose, preferred, exact, value)
+}
+
+func (m *EnvDraftManager) assignedPortFromEvidence(repoPath, targetDir, purpose string, preferred int, exactValue string, value *domain.EnvDraftValue) int {
+	if port, ok := parsePortEvidence(exactValue); ok {
+		assigned := m.assignedPort(repoPath, targetDir, purpose, port, true)
+		if !m.isPortAvailable(assigned) && value != nil {
+			value.Attention = append(value.Attention, fmt.Sprintf("Port %d is already in use, but repo evidence requires that exact port.", assigned))
+		}
+		return assigned
+	}
+	return m.assignedPort(repoPath, targetDir, purpose, preferred, false)
+}
+
+func (m *EnvDraftManager) assignedPort(repoPath, targetDir, purpose string, preferred int, exact bool) int {
+	if m.assignedPorts == nil {
+		m.assignedPorts = map[string]int{}
+	}
+	key := repoPath + "\x00" + targetDir + "\x00" + purpose
+	if port, ok := m.assignedPorts[key]; ok {
+		return port
+	}
+	port := preferred
+	if !exact {
+		for !m.isPortAvailable(port) || m.repoPortAssigned(repoPath, key, port) {
+			port++
+		}
+	}
+	m.assignedPorts[key] = port
+	return port
+}
+
+func (m *EnvDraftManager) repoPortAssigned(repoPath, currentKey string, port int) bool {
+	prefix := repoPath + "\x00"
+	for key, assigned := range m.assignedPorts {
+		if key == currentKey || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if assigned == port {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *EnvDraftManager) isPortAvailable(port int) bool {
+	if m.portAvailable != nil {
+		return m.portAvailable(port)
+	}
+	return isLocalPortAvailable(port)
+}
+
+func isLocalPortAvailable(port int) bool {
+	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
+func parsePortEvidence(value string) (int, bool) {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, false
+	}
+	return port, true
+}
+
+func isBackendPortEnv(name string) bool {
+	switch name {
+	case "PORT", "API_PORT", "BACKEND_PORT", "SERVER_PORT":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFrontendAPIURLEnv(name string) bool {
+	return strings.Contains(name, "API_URL") || strings.Contains(name, "BACKEND_URL") || strings.Contains(name, "SERVER_URL")
+}
+
+func isAppURLEnv(name string) bool {
+	switch name {
+	case "APP_URL", "APPLICATION_URL", "NEXT_PUBLIC_APP_URL", "VITE_APP_URL", "SITE_URL":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDatabaseURLEnv(name string) bool {
+	switch name {
+	case "DATABASE_URL", "POSTGRES_URL":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasTopologyServiceSignal(item domain.EnvVarRequirement, service string) bool {
+	for _, signal := range item.TopologySignals {
+		if signal.Service == service {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTopologySignalForDir(item domain.EnvVarRequirement, kind string) bool {
+	for _, signal := range item.TopologySignals {
+		if signal.Kind == kind && signal.TargetDir == item.TargetDir {
+			return true
+		}
+	}
+	return false
+}
+
+func backendTargetDir(item domain.EnvVarRequirement) (string, bool) {
+	for _, signal := range item.TopologySignals {
+		if signal.Kind == "backend" && signal.TargetDir != "" {
+			return signal.TargetDir, true
+		}
+	}
+	return "", false
+}
+
+func topologyConfidenceForItem(item domain.EnvVarRequirement, kind string) float64 {
+	for _, signal := range item.TopologySignals {
+		if signal.Kind == kind && signal.TargetDir == item.TargetDir {
+			return signal.Confidence
+		}
+	}
+	return 0.5
+}
+
+func maxConfidence(a, b float64) float64 {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+func envDatabaseName(projectName, repoPath string) string {
+	name := strings.TrimSpace(projectName)
+	if name == "" {
+		name = filepath.Base(repoPath)
+	}
+	name = strings.ToLower(name)
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	clean := strings.Trim(builder.String(), "_")
+	if clean == "" {
+		return "app"
+	}
+	return clean
 }
 
 func isWeakCustomEnvSecret(value string) bool {
@@ -529,6 +795,8 @@ func envDraftTargets(analysis domain.RepositoryAnalysis) ([]string, map[string][
 	paths := []string{}
 	varsByTarget := map[string][]domain.EnvVarRequirement{}
 	for _, item := range analysis.Env.Variables {
+		item.TopologySignals = analysis.Topology.Signals
+		item.ProjectName = analysis.ProjectName
 		targetPath := analysis.Env.TargetPath
 		if strings.TrimSpace(item.TargetDir) != "" {
 			targetPath = filepath.Join(item.TargetDir, ".env")

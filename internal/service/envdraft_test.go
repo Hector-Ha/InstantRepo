@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"instantrepo/internal/analyzer"
 	"instantrepo/internal/domain"
 	"instantrepo/internal/envcatalog"
 )
@@ -351,6 +352,264 @@ func TestBuildEnvDraftAppliesDevDefaultFromCatalog(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDraftAllocatesFrontendBackendDefaultsFromTopology(t *testing.T) {
+	repoPath := t.TempDir()
+	webDir := filepath.Join(repoPath, "web")
+	apiDir := filepath.Join(repoPath, "api")
+	writeServiceTestFile(t, filepath.Join(webDir, "package.json"), `{
+  "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"}
+}`)
+	writeServiceTestFile(t, filepath.Join(webDir, ".env.example"), "VITE_API_URL=\n")
+	writeServiceTestFile(t, filepath.Join(apiDir, "package.json"), `{
+  "dependencies": {"express": "latest"},
+  "scripts": {"dev": "node server.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(apiDir, ".env.example"), "PORT=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if !hasTopologySignal(analysis.Topology, "frontend", webDir) || !hasTopologySignal(analysis.Topology, "backend", apiDir) {
+		t.Fatalf("expected frontend and backend topology signals, got %+v", analysis.Topology)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	apiTarget := envDraftTarget(t, draft, filepath.Join("api", ".env"))
+	webTarget := envDraftTarget(t, draft, filepath.Join("web", ".env"))
+	if got := envDraftValue(t, apiTarget, "PORT").Value; got != "8080" {
+		t.Fatalf("expected backend PORT 8080, got %q", got)
+	}
+	if got := envDraftValue(t, webTarget, "VITE_API_URL").Value; got != "http://localhost:8080" {
+		t.Fatalf("expected frontend API URL to point at backend, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftAllocatesFullstackAppURLAndPort(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{
+  "dependencies": {"next": "latest", "react": "latest"},
+  "scripts": {"dev": "next dev"}
+}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "APP_URL=\nPORT=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	if got := envDraftValue(t, target, "PORT").Value; got != "3000" {
+		t.Fatalf("expected fullstack PORT 3000, got %q", got)
+	}
+	if got := envDraftValue(t, target, "APP_URL").Value; got != "http://localhost:3000" {
+		t.Fatalf("expected fullstack app URL, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftAllocatesDatastoreAndCacheDefaultsFromTopology(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"name":"stack-app","scripts":{"dev":"node server.js"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "DATABASE_URL=\nREDIS_URL=\n")
+	writeServiceTestFile(t, filepath.Join(repoPath, "docker-compose.yml"), "services:\n  postgres:\n    image: postgres:16\n  redis:\n    image: redis:7\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	if got := envDraftValue(t, target, "DATABASE_URL").Value; got != "postgres://postgres:postgres@localhost:5432/stack_app" {
+		t.Fatalf("expected repo-scoped postgres URL, got %q", got)
+	}
+	if got := envDraftValue(t, target, "REDIS_URL").Value; got != "redis://localhost:6379" {
+		t.Fatalf("expected redis URL, got %q", got)
+	}
+	if !hasTopologyService(analysis.Topology, "database", "postgres") || !hasTopologyService(analysis.Topology, "cache", "redis") {
+		t.Fatalf("expected datastore/cache topology signals, got %+v", analysis.Topology)
+	}
+}
+
+func TestBuildEnvDraftUsesNextFreePortForConventionalBusyPort(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"dependencies":{"next":"latest","react":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "APP_URL=\nPORT=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	manager.portAvailable = func(port int) bool { return port != 3000 }
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	if got := envDraftValue(t, target, "PORT").Value; got != "3001" {
+		t.Fatalf("expected next free fullstack port, got %q", got)
+	}
+	if got := envDraftValue(t, target, "APP_URL").Value; got != "http://localhost:3001" {
+		t.Fatalf("expected app URL to use next free port, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftKeepsBusyExactPortEvidenceWithAttention(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"dependencies":{"next":"latest","react":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "APP_URL=\nPORT=4000\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	manager.portAvailable = func(port int) bool { return port != 4000 }
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	port := envDraftValue(t, target, "PORT")
+	if port.Value != "4000" {
+		t.Fatalf("expected exact port evidence to stay 4000, got %q", port.Value)
+	}
+	if len(port.Attention) == 0 {
+		t.Fatalf("expected busy exact port attention, got %+v", port)
+	}
+	if got := envDraftValue(t, target, "APP_URL").Value; got != "http://localhost:4000" {
+		t.Fatalf("expected app URL to use exact port evidence, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftKeepsAssignedPortStableForSameRepo(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"dependencies":{"next":"latest","react":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "PORT=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	manager.portAvailable = func(port int) bool { return port == 3002 }
+	first, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("first BuildDraft returned error: %v", err)
+	}
+	manager.portAvailable = func(port int) bool { return port == 3005 }
+	second, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("second BuildDraft returned error: %v", err)
+	}
+
+	firstPort := envDraftValue(t, envDraftTarget(t, first, ".env"), "PORT").Value
+	secondPort := envDraftValue(t, envDraftTarget(t, second, ".env"), "PORT").Value
+	if firstPort != "3002" || secondPort != firstPort {
+		t.Fatalf("expected stable assigned port 3002, got first %q second %q", firstPort, secondPort)
+	}
+}
+
+func TestBuildEnvDraftAvoidsSameDraftPortCollisions(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	adminDir := filepath.Join(repoPath, "admin-api")
+	writeServiceTestFile(t, filepath.Join(apiDir, "package.json"), `{"dependencies":{"express":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(apiDir, ".env.example"), "PORT=\n")
+	writeServiceTestFile(t, filepath.Join(adminDir, "package.json"), `{"dependencies":{"express":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(adminDir, ".env.example"), "PORT=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	manager.portAvailable = func(port int) bool { return true }
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	apiPort := envDraftValue(t, envDraftTarget(t, draft, filepath.Join("api", ".env")), "PORT").Value
+	adminPort := envDraftValue(t, envDraftTarget(t, draft, filepath.Join("admin-api", ".env")), "PORT").Value
+	if apiPort == adminPort {
+		t.Fatalf("expected distinct backend ports, got %q and %q", apiPort, adminPort)
+	}
+}
+
+func TestBuildEnvDraftLeavesCloudDatastoreHintBlankWithLocalSuggestion(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "requirements.txt"), "flask\n")
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "MONGODB_URI=mongodb+srv://cluster.example.mongodb.net/app\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, envDraftTarget(t, draft, ".env"), "MONGODB_URI")
+	if value.Value != "" {
+		t.Fatalf("expected cloud datastore hint to stay blank, got %q", value.Value)
+	}
+	if !containsText(value.Attention, "local suggestion") && !containsText(value.Instructions, "mongodb://localhost:27017") {
+		t.Fatalf("expected local suggestion metadata, got attention %+v instructions %+v", value.Attention, value.Instructions)
+	}
+}
+
+func TestBuildEnvDraftLeavesSupabaseHintBlankWithLocalSuggestion(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"dependencies":{"next":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "SUPABASE_URL=\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, envDraftTarget(t, draft, ".env"), "SUPABASE_URL")
+	if value.Value != "" {
+		t.Fatalf("expected Supabase provider config to stay blank, got %q", value.Value)
+	}
+	if !containsText(value.Instructions, "postgres://postgres:postgres@localhost:5432") {
+		t.Fatalf("expected local datastore suggestion, got %+v", value.Instructions)
+	}
+}
+
 func TestBuildEnvDraftRejectsUnsupportedCatalogAction(t *testing.T) {
 	repoPath := t.TempDir()
 	manager := NewEnvDraftManager()
@@ -611,4 +870,41 @@ func envDraftValue(t *testing.T, target domain.EnvDraftTarget, name string) doma
 	}
 	t.Fatalf("expected value %s in target %+v", name, target)
 	return domain.EnvDraftValue{}
+}
+
+func hasTopologySignal(topology domain.AppTopology, kind, targetDir string) bool {
+	for _, signal := range topology.Signals {
+		if signal.Kind == kind && signal.TargetDir == targetDir && signal.Confidence > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTopologyService(topology domain.AppTopology, kind, service string) bool {
+	for _, signal := range topology.Signals {
+		if signal.Kind == kind && signal.Service == service && signal.Confidence > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func writeServiceTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create dir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func containsText(items []string, want string) bool {
+	for _, item := range items {
+		if strings.Contains(item, want) {
+			return true
+		}
+	}
+	return false
 }
