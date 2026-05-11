@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"instantrepo/internal/domain"
 	"instantrepo/internal/envcatalog"
@@ -28,6 +29,73 @@ func NewEnvDraftManager() *EnvDraftManager {
 		catalog:          envcatalog.DefaultCatalog(),
 		generatedSecrets: map[string]string{},
 	}
+}
+
+func (m *EnvDraftManager) Preview(analysis domain.RepositoryAnalysis) (string, error) {
+	draft, err := m.BuildDraft(analysis)
+	if err != nil {
+		return "", err
+	}
+	return renderEnvDraft(draft), nil
+}
+
+func (m *EnvDraftManager) Prepare(analysis domain.RepositoryAnalysis) (domain.ExecutionResult, error) {
+	started := time.Now()
+	draft, err := m.BuildDraft(analysis)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	result, err := m.SaveAll(draft)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	return envDraftExecutionResult("create-env-file", "instantrepo internal:prepare-env", analysis.RepoPath, result, started), nil
+}
+
+func (m *EnvDraftManager) ApplyValues(analysis domain.RepositoryAnalysis, values map[string]string) (domain.ExecutionResult, error) {
+	started := time.Now()
+	draft, err := m.BuildDraft(analysis)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	applyEnvDraftValues(draft.Targets, values)
+	result, err := m.SaveAll(draft)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	return envDraftExecutionResult("create-env-file", "instantrepo internal:prepare-env", analysis.RepoPath, result, started), nil
+}
+
+func (m *EnvDraftManager) SaveRaw(repoPath, targetPath, content string) (domain.ExecutionResult, error) {
+	started := time.Now()
+	if strings.TrimSpace(targetPath) == "" {
+		return domain.ExecutionResult{}, fmt.Errorf("env target path is not available")
+	}
+
+	target := domain.EnvDraftTarget{
+		RelativePath: relativeEnvTargetPath(repoPath, targetPath),
+		AbsolutePath: targetPath,
+	}
+	if err := validateEnvDraftTarget(repoPath, target); err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return domain.ExecutionResult{}, fmt.Errorf("create env directory for %s: %w", target.RelativePath, err)
+	}
+	if err := m.writeEnvTargetWithRetry(targetPath, []byte(content)); err != nil {
+		return domain.ExecutionResult{}, envSaveError(target.RelativePath, "write_failed")
+	}
+
+	return envDraftExecutionResult(
+		"save-env-file",
+		"instantrepo internal:save-env",
+		repoPath,
+		domain.EnvSaveResult{Targets: []domain.EnvSaveTargetResult{{
+			RelativePath: target.RelativePath,
+			Succeeded:    true,
+		}}},
+		started,
+	), nil
 }
 
 func (m *EnvDraftManager) BuildDraft(analysis domain.RepositoryAnalysis) (domain.EnvDraft, error) {
@@ -88,6 +156,53 @@ func (m *EnvDraftManager) SaveAll(draft domain.EnvDraft) (domain.EnvSaveResult, 
 		})
 	}
 	return result, nil
+}
+
+func applyEnvDraftValues(targets []domain.EnvDraftTarget, values map[string]string) {
+	for targetIndex := range targets {
+		for valueIndex := range targets[targetIndex].Values {
+			name := targets[targetIndex].Values[valueIndex].Name
+			nextValue, ok := values[name]
+			if !ok {
+				continue
+			}
+			trimmed := strings.TrimSpace(nextValue)
+			if trimmed == "" {
+				continue
+			}
+			targets[targetIndex].Values[valueIndex].Value = trimmed
+			targets[targetIndex].Values[valueIndex].Confidence = 1
+			targets[targetIndex].Values[valueIndex].Provenance.Source = domain.EnvValueSourceDraft
+		}
+	}
+}
+
+func envDraftExecutionResult(stepID, command, cwd string, saveResult domain.EnvSaveResult, started time.Time) domain.ExecutionResult {
+	return domain.ExecutionResult{
+		StepID:    stepID,
+		Command:   command,
+		Cwd:       cwd,
+		Stdout:    envSaveStdout(saveResult),
+		Duration:  time.Since(started).String(),
+		Succeeded: true,
+	}
+}
+
+func envSaveStdout(result domain.EnvSaveResult) string {
+	var builder strings.Builder
+	for _, target := range result.Targets {
+		if !target.Succeeded {
+			continue
+		}
+		label := strings.TrimSpace(target.RelativePath)
+		if label == "" {
+			label = "env target"
+		}
+		builder.WriteString("Saved ")
+		builder.WriteString(label)
+		builder.WriteString("\n")
+	}
+	return builder.String()
 }
 
 func validateEnvDraftTargets(draft domain.EnvDraft) error {
@@ -329,6 +444,24 @@ func generateEnvLocalSecret() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func renderEnvDraft(draft domain.EnvDraft) string {
+	if len(draft.Targets) == 1 {
+		return renderEnvDraftTarget(draft.Targets[0])
+	}
+
+	var builder strings.Builder
+	for i, target := range draft.Targets {
+		if i > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString("# Target ")
+		builder.WriteString(target.RelativePath)
+		builder.WriteString("\n")
+		builder.WriteString(renderEnvDraftTarget(target))
+	}
+	return builder.String()
 }
 
 func renderEnvDraftTarget(target domain.EnvDraftTarget) string {

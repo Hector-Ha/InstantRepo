@@ -20,7 +20,7 @@ type AppService struct {
 	detector       EnvironmentDetector
 	planner        *Planner
 	executor       *Executor
-	envFiles       *EnvFileManager
+	envDrafts      *EnvDraftManager
 	installedRepos InstalledRepoStore
 	setupRecorder  *setupSessionRecorder
 	disk           DiskChecker
@@ -60,7 +60,7 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 		detector:       detector.NewEnvironmentDetector(),
 		planner:        NewPlanner(),
 		executor:       NewExecutor(),
-		envFiles:       NewEnvFileManager(),
+		envDrafts:      NewEnvDraftManager(),
 		installedRepos: installedRepos,
 		setupRecorder:  newSetupSessionRecorder(installedRepos),
 		disk:           osDiskChecker{},
@@ -222,7 +222,7 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 	var result domain.ExecutionResult
 	switch selected.Type {
 	case "env-setup":
-		result, err = s.envFiles.Prepare(analyzeResp.Analysis)
+		result, err = s.envDrafts.Prepare(analyzeResp.Analysis)
 	default:
 		result, err = s.executor.RunStepWithEvents(runCtx, *selected, redactExecutionEventSink(onEvent))
 	}
@@ -279,7 +279,7 @@ func (s *AppService) PreviewEnv(ctx context.Context, localPath string) (string, 
 		return "", err
 	}
 
-	return s.envFiles.Preview(analyzeResp.Analysis)
+	return s.envDrafts.Preview(analyzeResp.Analysis)
 }
 
 func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values map[string]string) (domain.ExecuteResponse, error) {
@@ -290,7 +290,7 @@ func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values
 	}
 
 	startedAt := time.Now().UTC()
-	result, err := s.envFiles.ApplyValues(analyzeResp.Analysis, values)
+	result, err := s.envDrafts.ApplyValues(analyzeResp.Analysis, values)
 	finishedAt := time.Now().UTC()
 	action := guardedSetupAction{
 		repoPath: analyzeResp.Source.Path,
@@ -310,7 +310,21 @@ func (s *AppService) SaveRawEnv(ctx context.Context, localPath, content string) 
 	}
 
 	startedAt := time.Now().UTC()
-	result, err := s.envFiles.WriteRaw(analyzeResp.Analysis.RepoPath, analyzeResp.Analysis.Env.TargetPath, content)
+	draft, draftErr := s.envDrafts.BuildDraft(analyzeResp.Analysis)
+	var targetPath string
+	if draftErr == nil {
+		if len(draft.Targets) != 1 {
+			draftErr = fmt.Errorf("raw env save supports one env target; use structured env draft for multiple targets")
+		} else {
+			targetPath = draft.Targets[0].AbsolutePath
+		}
+	}
+	var result domain.ExecutionResult
+	if draftErr != nil {
+		err = draftErr
+	} else {
+		result, err = s.envDrafts.SaveRaw(analyzeResp.Analysis.RepoPath, targetPath, content)
+	}
 	finishedAt := time.Now().UTC()
 	action := guardedSetupAction{
 		repoPath: analyzeResp.Source.Path,

@@ -413,6 +413,46 @@ func TestExecuteReusesSetupSessionForSameRepoGuardedActions(t *testing.T) {
 	}
 }
 
+func TestExecuteEnvSetupUsesCatalogDrivenDraft(t *testing.T) {
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "package.json"), []byte(`{"name":"env-app"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("JWT_SECRET=changeme\nOPENAI_API_KEY=template-secret\n"), 0o644); err != nil {
+		t.Fatalf("write env template: %v", err)
+	}
+
+	setupStore := &recordingInstalledRepoStore{}
+	app := newInstalledRepoTestApp(setupStore)
+	app.envDrafts.generateSecret = func() (string, error) {
+		return "generated-secret", nil
+	}
+
+	resp, err := app.Execute(context.Background(), domain.ExecuteRequest{
+		LocalPath:    repoPath,
+		StepID:       "create-env-file",
+		ApproveRisky: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !resp.Result.Succeeded {
+		t.Fatalf("expected env setup to succeed, got %+v", resp.Result)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(repoPath, ".env"))
+	if err != nil {
+		t.Fatalf("read generated env: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "JWT_SECRET=generated-secret") {
+		t.Fatalf("expected generated local secret, got:\n%s", content)
+	}
+	if !strings.Contains(content, "OPENAI_API_KEY=") || strings.Contains(content, "template-secret") {
+		t.Fatalf("expected service credential to stay blank, got:\n%s", content)
+	}
+}
+
 func TestSaveRawEnvPersistsGuardedSetupStepWithoutRawEnvContent(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("OPENAI_API_KEY=\nDATABASE_URL=\n"), 0o644); err != nil {
@@ -455,6 +495,38 @@ func TestSaveRawEnvPersistsGuardedSetupStepWithoutRawEnvContent(t *testing.T) {
 	}
 	if strings.Contains(setupStore.logs[0], "raw-secret") || strings.Contains(setupStore.logs[0], "user:pass") {
 		t.Fatalf("expected persistent log to omit raw env content, got %q", setupStore.logs[0])
+	}
+}
+
+func TestSaveRawEnvRejectsMultiTargetDraft(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	webDir := filepath.Join(repoPath, "web")
+	if err := os.MkdirAll(apiDir, 0o755); err != nil {
+		t.Fatalf("create api dir: %v", err)
+	}
+	if err := os.MkdirAll(webDir, 0o755); err != nil {
+		t.Fatalf("create web dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(apiDir, ".env.example"), []byte("API_SECRET=\n"), 0o644); err != nil {
+		t.Fatalf("write api env template: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, ".env.example"), []byte("VITE_API_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write web env template: %v", err)
+	}
+
+	setupStore := &recordingInstalledRepoStore{}
+	app := newInstalledRepoTestApp(setupStore)
+
+	_, err := app.SaveRawEnv(context.Background(), repoPath, "API_SECRET=raw\nVITE_API_URL=http://localhost:5173\n")
+	if err == nil {
+		t.Fatalf("expected multi-target raw save to fail")
+	}
+	if _, statErr := os.Stat(filepath.Join(apiDir, ".env")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected api .env not to be written, stat err %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(webDir, ".env")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected web .env not to be written, stat err %v", statErr)
 	}
 }
 
