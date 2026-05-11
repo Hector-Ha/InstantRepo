@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"instantrepo/internal/domain"
+	"instantrepo/internal/envcatalog"
 )
+
+var unpaddedBase64URLPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
 func TestBuildEnvDraftPreservesExistingFileContentAndProvenance(t *testing.T) {
 	repoPath := t.TempDir()
@@ -136,6 +140,241 @@ func TestBuildEnvDraftUsesEnvRequirementConfidence(t *testing.T) {
 	value := envDraftValue(t, draft.Targets[0], "APP_URL")
 	if value.Confidence != 0.45 {
 		t.Fatalf("expected confidence 0.45, got %v", value.Confidence)
+	}
+}
+
+func TestBuildEnvDraftGeneratesLocalSecretFromCatalog(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "JWT_SECRET", TargetDir: repoPath, Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "JWT_SECRET")
+	if !unpaddedBase64URLPattern.MatchString(value.Value) {
+		t.Fatalf("expected 32-byte unpadded base64url secret, got %q", value.Value)
+	}
+	if value.ValueClass != domain.EnvValueClassGeneratedLocalSecret {
+		t.Fatalf("expected generated local secret class, got %q", value.ValueClass)
+	}
+	if value.Provenance.Source != domain.EnvValueSourceGeneratedSecret {
+		t.Fatalf("expected generated secret provenance, got %q", value.Provenance.Source)
+	}
+}
+
+func TestBuildEnvDraftKeepsGeneratedLocalSecretStable(t *testing.T) {
+	repoPath := t.TempDir()
+	generated := 0
+	manager := NewEnvDraftManager()
+	manager.generateSecret = func() (string, error) {
+		generated++
+		return fmt.Sprintf("generated-secret-%d", generated), nil
+	}
+	analysis := domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "JWT_SECRET", TargetDir: repoPath, Secret: true},
+			},
+		},
+	}
+
+	first, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("first BuildDraft returned error: %v", err)
+	}
+	second, err := manager.BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("second BuildDraft returned error: %v", err)
+	}
+
+	firstValue := envDraftValue(t, first.Targets[0], "JWT_SECRET").Value
+	secondValue := envDraftValue(t, second.Targets[0], "JWT_SECRET").Value
+	if firstValue != "generated-secret-1" || secondValue != firstValue {
+		t.Fatalf("expected stable generated secret, got first %q second %q", firstValue, secondValue)
+	}
+}
+
+func TestBuildEnvDraftReplacesKnownWeakSecretPlaceholder(t *testing.T) {
+	repoPath := t.TempDir()
+	targetPath := filepath.Join(repoPath, ".env")
+	if err := os.WriteFile(targetPath, []byte("JWT_SECRET=changeme\n"), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	manager := NewEnvDraftManager()
+	manager.generateSecret = func() (string, error) {
+		return "generated-secret", nil
+	}
+
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			TargetPath: targetPath,
+			Variables: []domain.EnvVarRequirement{
+				{Name: "JWT_SECRET", TargetDir: repoPath, Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "JWT_SECRET")
+	if value.Value != "generated-secret" {
+		t.Fatalf("expected weak placeholder to be replaced, got %q", value.Value)
+	}
+	if value.Provenance.Source != domain.EnvValueSourceGeneratedSecret {
+		t.Fatalf("expected generated secret provenance, got %q", value.Provenance.Source)
+	}
+}
+
+func TestBuildEnvDraftPreservesWeakCustomSecretWithAttention(t *testing.T) {
+	repoPath := t.TempDir()
+	targetPath := filepath.Join(repoPath, ".env")
+	if err := os.WriteFile(targetPath, []byte("JWT_SECRET=secret\n"), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			TargetPath: targetPath,
+			Variables: []domain.EnvVarRequirement{
+				{Name: "JWT_SECRET", TargetDir: repoPath, Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "JWT_SECRET")
+	if value.Value != "secret" {
+		t.Fatalf("expected weak custom value to be preserved, got %q", value.Value)
+	}
+	if len(value.Attention) == 0 {
+		t.Fatalf("expected weak custom secret attention, got %+v", value)
+	}
+}
+
+func TestBuildEnvDraftLeavesServiceCredentialBlank(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "OPENAI_API_KEY", TargetDir: repoPath, Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "OPENAI_API_KEY")
+	if value.Value != "" {
+		t.Fatalf("expected service credential to stay blank, got %q", value.Value)
+	}
+	if value.ValueClass != domain.EnvValueClassServiceCredential {
+		t.Fatalf("expected service credential class, got %q", value.ValueClass)
+	}
+	if len(value.Instructions) == 0 {
+		t.Fatalf("expected service credential instructions")
+	}
+}
+
+func TestBuildEnvDraftLeavesProviderConfigBlank(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "SUPABASE_URL", TargetDir: repoPath},
+				{Name: "FIREBASE_API_KEY", TargetDir: repoPath},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	for _, name := range []string{"SUPABASE_URL", "FIREBASE_API_KEY"} {
+		value := envDraftValue(t, draft.Targets[0], name)
+		if value.Value != "" {
+			t.Fatalf("expected provider config %s to stay blank, got %q", name, value.Value)
+		}
+		if value.ValueClass != domain.EnvValueClassProviderConfig {
+			t.Fatalf("expected provider config class for %s, got %q", name, value.ValueClass)
+		}
+	}
+}
+
+func TestBuildEnvDraftAppliesDevDefaultFromCatalog(t *testing.T) {
+	repoPath := t.TempDir()
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "DATABASE_URL", TargetDir: repoPath, Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "DATABASE_URL")
+	if value.Value != "postgres://postgres:postgres@localhost:5432/postgres" {
+		t.Fatalf("expected database dev default, got %q", value.Value)
+	}
+	if value.ValueClass != domain.EnvValueClassDevDefault {
+		t.Fatalf("expected dev default class, got %q", value.ValueClass)
+	}
+	if value.Provenance.Source != domain.EnvValueSourceCatalog {
+		t.Fatalf("expected catalog provenance, got %q", value.Provenance.Source)
+	}
+}
+
+func TestBuildEnvDraftRejectsUnsupportedCatalogAction(t *testing.T) {
+	repoPath := t.TempDir()
+	manager := NewEnvDraftManager()
+	manager.catalog = envcatalog.Catalog{
+		Version:        "test",
+		AllowedActions: []string{envcatalog.ActionLeaveBlank},
+		Rules: []envcatalog.Rule{
+			{
+				Names:  []string{"API_KEY"},
+				Action: "run_command",
+			},
+		},
+	}
+
+	_, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "API_KEY", TargetDir: repoPath},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported catalog action error")
 	}
 }
 

@@ -380,9 +380,18 @@ type EnvVarRequirement struct {
 }
 
 const (
-	EnvValueSourceExistingFile = "existing_file"
-	EnvValueSourceTemplate     = "template"
-	EnvValueSourceDraft        = "draft"
+	EnvValueSourceExistingFile    = "existing_file"
+	EnvValueSourceTemplate        = "template"
+	EnvValueSourceDraft           = "draft"
+	EnvValueSourceCatalog         = "catalog"
+	EnvValueSourceGeneratedSecret = "generated_secret"
+)
+
+const (
+	EnvValueClassDevDefault           = "dev_default"
+	EnvValueClassGeneratedLocalSecret = "generated_local_secret"
+	EnvValueClassServiceCredential    = "service_credential"
+	EnvValueClassProviderConfig       = "provider_config"
 )
 
 type EnvDraft struct {
@@ -398,11 +407,14 @@ type EnvDraftTarget struct {
 }
 
 type EnvDraftValue struct {
-	Name       string             `json:"name"`
-	Value      string             `json:"value"`
-	Secret     bool               `json:"secret"`
-	Confidence float64            `json:"confidence"`
-	Provenance EnvValueProvenance `json:"provenance"`
+	Name         string             `json:"name"`
+	Value        string             `json:"value"`
+	Secret       bool               `json:"secret"`
+	Confidence   float64            `json:"confidence"`
+	ValueClass   string             `json:"valueClass,omitempty"`
+	Instructions []string           `json:"instructions,omitempty"`
+	Attention    []string           `json:"attention,omitempty"`
+	Provenance   EnvValueProvenance `json:"provenance"`
 }
 
 type EnvValueProvenance struct {

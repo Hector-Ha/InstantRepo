@@ -1,23 +1,32 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"instantrepo/internal/domain"
+	"instantrepo/internal/envcatalog"
 )
 
 const envSaveAttempts = 3
 
 type EnvDraftManager struct {
-	writeEnvTarget func(path string, content []byte) error
+	writeEnvTarget   func(path string, content []byte) error
+	generateSecret   func() (string, error)
+	catalog          envcatalog.Catalog
+	generatedSecrets map[string]string
 }
 
 func NewEnvDraftManager() *EnvDraftManager {
 	return &EnvDraftManager{
-		writeEnvTarget: atomicWriteEnvTarget,
+		writeEnvTarget:   atomicWriteEnvTarget,
+		generateSecret:   generateEnvLocalSecret,
+		catalog:          envcatalog.DefaultCatalog(),
+		generatedSecrets: map[string]string{},
 	}
 }
 
@@ -32,7 +41,7 @@ func (m *EnvDraftManager) BuildDraft(analysis domain.RepositoryAnalysis) (domain
 	}
 	draft := domain.EnvDraft{RepoPath: analysis.RepoPath}
 	for _, targetPath := range targetPaths {
-		target, err := buildEnvDraftTarget(analysis.RepoPath, targetPath, varsByTarget[targetPath])
+		target, err := m.buildEnvDraftTarget(analysis.RepoPath, targetPath, varsByTarget[targetPath])
 		if err != nil {
 			return domain.EnvDraft{}, err
 		}
@@ -189,7 +198,10 @@ func atomicWriteEnvTarget(path string, content []byte) error {
 	return replaceEnvTarget(tempPath, path)
 }
 
-func buildEnvDraftTarget(repoPath, targetPath string, vars []domain.EnvVarRequirement) (domain.EnvDraftTarget, error) {
+func (m *EnvDraftManager) buildEnvDraftTarget(repoPath, targetPath string, vars []domain.EnvVarRequirement) (domain.EnvDraftTarget, error) {
+	if err := m.envCatalog().Validate(); err != nil {
+		return domain.EnvDraftTarget{}, err
+	}
 	raw, err := os.ReadFile(targetPath)
 	if err != nil && !os.IsNotExist(err) {
 		return domain.EnvDraftTarget{}, fmt.Errorf("read env target: %w", err)
@@ -214,15 +226,109 @@ func buildEnvDraftTarget(repoPath, targetPath string, vars []domain.EnvVarRequir
 			Confidence: confidence,
 			Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceDraft},
 		}
-		if existing, ok := valuesByName[item.Name]; ok && strings.TrimSpace(existing) != "" {
+		if decision, ok := m.envCatalog().Classify(item.Name); ok {
+			value.ValueClass = decision.ValueClass
+			value.Instructions = append(value.Instructions, decision.Instructions...)
+			value.Attention = append(value.Attention, decision.Attention...)
+			if decision.Confidence > 0 {
+				value.Confidence = decision.Confidence
+			}
+			switch decision.Action {
+			case envcatalog.ActionGenerateLocalSecret:
+				generated, err := m.generatedLocalSecret(repoPath, targetPath, item.Name)
+				if err != nil {
+					return domain.EnvDraftTarget{}, fmt.Errorf("generate local secret for %s: %w", item.Name, err)
+				}
+				value.Value = generated
+				value.Provenance.Source = domain.EnvValueSourceGeneratedSecret
+			case envcatalog.ActionFillDevDefault:
+				value.Value = decision.DefaultValue
+				value.Provenance.Source = domain.EnvValueSourceCatalog
+			case envcatalog.ActionLeaveBlank:
+				value.Value = ""
+				value.Provenance.Source = domain.EnvValueSourceCatalog
+			}
+		}
+		if existing, ok := valuesByName[item.Name]; ok && strings.TrimSpace(existing) != "" && !shouldReplaceExistingEnvValue(value, existing) {
 			value.Value = existing
 			value.Confidence = 1
 			value.Provenance.Source = domain.EnvValueSourceExistingFile
+			if value.ValueClass == domain.EnvValueClassGeneratedLocalSecret && isWeakCustomEnvSecret(existing) {
+				value.Attention = append(value.Attention, "Existing local secret looks weak. Review it before running the app.")
+			}
 		}
 		target.Values = append(target.Values, value)
 	}
 
 	return target, nil
+}
+
+func isWeakCustomEnvSecret(value string) bool {
+	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'`))
+	if isKnownWeakEnvPlaceholder(normalized) {
+		return false
+	}
+	switch normalized {
+	case "secret", "password", "default", "devsecret", "dev-secret", "123456", "123456789":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldReplaceExistingEnvValue(value domain.EnvDraftValue, existing string) bool {
+	if value.ValueClass != domain.EnvValueClassGeneratedLocalSecret {
+		return false
+	}
+	return isKnownWeakEnvPlaceholder(existing)
+}
+
+func isKnownWeakEnvPlaceholder(value string) bool {
+	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'`))
+	switch normalized {
+	case "changeme", "change_me", "change-me", "your_secret_here", "your-secret-here", "your_value_here", "your-value-here":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *EnvDraftManager) generatedLocalSecret(repoPath, targetPath, name string) (string, error) {
+	if m.generatedSecrets == nil {
+		m.generatedSecrets = map[string]string{}
+	}
+	key := repoPath + "\x00" + targetPath + "\x00" + name
+	if value, ok := m.generatedSecrets[key]; ok {
+		return value, nil
+	}
+	value, err := m.envSecretGenerator()()
+	if err != nil {
+		return "", err
+	}
+	m.generatedSecrets[key] = value
+	return value, nil
+}
+
+func (m *EnvDraftManager) envCatalog() envcatalog.Catalog {
+	if strings.TrimSpace(m.catalog.Version) == "" && len(m.catalog.Rules) == 0 {
+		return envcatalog.DefaultCatalog()
+	}
+	return m.catalog
+}
+
+func (m *EnvDraftManager) envSecretGenerator() func() (string, error) {
+	if m.generateSecret != nil {
+		return m.generateSecret
+	}
+	return generateEnvLocalSecret
+}
+
+func generateEnvLocalSecret() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
 func renderEnvDraftTarget(target domain.EnvDraftTarget) string {
