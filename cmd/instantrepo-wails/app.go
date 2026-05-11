@@ -56,8 +56,12 @@ func (a *App) InstalledRepoDetails(installedRepoID int64) (domain.InstalledRepoD
 	return a.service.InstalledRepoDetails(a.appContext(), installedRepoID)
 }
 
-func (a *App) GenerateEnvDraft(localPath string) (string, error) {
-	return a.service.PreviewEnv(a.appContext(), localPath)
+func (a *App) GenerateEnvDraft(localPath string) (domain.EnvDraft, error) {
+	return a.service.GenerateEnvDraft(a.appContext(), localPath)
+}
+
+func (a *App) SaveEnvDraft(localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error) {
+	return a.service.SaveStructuredEnvDraft(a.appContext(), localPath, draft)
 }
 
 func (a *App) SaveEnvFile(localPath, content string) (domain.ExecuteResponse, error) {

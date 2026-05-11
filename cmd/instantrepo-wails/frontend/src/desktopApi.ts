@@ -1,6 +1,7 @@
 import type { ClonePreflightResponse } from "./clonePreflight";
 import type {
   AnalyzeSnapshot,
+  EnvDraft,
   ExecuteResponse,
   InstalledRepoDetailsResponse,
   InstalledRepoManagerResponse,
@@ -22,7 +23,7 @@ export interface DesktopAppBridge {
     approved: boolean,
   ): Promise<ExecuteResponse>;
   ExportRepoDiagnostics(localPath: string): Promise<unknown>;
-  GenerateEnvDraft(localPath: string): Promise<string>;
+  GenerateEnvDraft(localPath: string): Promise<EnvDraft>;
   ImportRepository(
     repoURL: string,
     destinationRoot: string,
@@ -32,6 +33,7 @@ export interface DesktopAppBridge {
   ): Promise<InstalledRepoDetailsResponse>;
   ListInstalledRepos(): Promise<InstalledRepoManagerResponse>;
   OpenDirectory(): Promise<string>;
+  SaveEnvDraft(localPath: string, draft: EnvDraft): Promise<ExecuteResponse>;
   SaveEnvFile(localPath: string, content: string): Promise<ExecuteResponse>;
   ShellInfo(): Promise<unknown>;
 }
@@ -120,6 +122,9 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     SaveEnvFile(localPath: string, content: string) {
       return call("SaveEnvFile")(localPath, content);
     },
+    SaveEnvDraft(localPath: string, draft: EnvDraft) {
+      return call("SaveEnvDraft")(localPath, draft);
+    },
     ShellInfo() {
       return call("ShellInfo")();
     },
@@ -138,4 +143,5 @@ export const InstalledRepoDetails = desktopApi.InstalledRepoDetails;
 export const ListInstalledRepos = desktopApi.ListInstalledRepos;
 export const OpenDirectory = desktopApi.OpenDirectory;
 export const SaveEnvFile = desktopApi.SaveEnvFile;
+export const SaveEnvDraft = desktopApi.SaveEnvDraft;
 export const ShellInfo = desktopApi.ShellInfo;

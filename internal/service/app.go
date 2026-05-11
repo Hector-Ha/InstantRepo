@@ -282,6 +282,50 @@ func (s *AppService) PreviewEnv(ctx context.Context, localPath string) (string, 
 	return s.envDrafts.Preview(analyzeResp.Analysis)
 }
 
+func (s *AppService) GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error) {
+	localPath = strings.TrimSpace(localPath)
+	if localPath == "" {
+		return domain.EnvDraft{}, fmt.Errorf("localPath is required")
+	}
+
+	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
+	if err != nil {
+		return domain.EnvDraft{}, err
+	}
+	return s.envDrafts.BuildDraft(analyzeResp.Analysis)
+}
+
+func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath string, edited domain.EnvDraft) (domain.ExecuteResponse, error) {
+	localPath = strings.TrimSpace(localPath)
+	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})
+	if err != nil {
+		return domain.ExecuteResponse{}, err
+	}
+
+	startedAt := time.Now().UTC()
+	draft, err := s.envDrafts.BuildDraft(analyzeResp.Analysis)
+	if err == nil {
+		applyEditedEnvDraftValues(draft.Targets, edited.Targets)
+	}
+	var result domain.ExecutionResult
+	if err == nil {
+		saveResult, saveErr := s.envDrafts.SaveAll(draft)
+		err = saveErr
+		if saveErr == nil {
+			result = envDraftExecutionResult("create-env-file", "instantrepo internal:prepare-env", analyzeResp.Analysis.RepoPath, saveResult, startedAt)
+		}
+	}
+	finishedAt := time.Now().UTC()
+	action := guardedSetupAction{
+		repoPath: analyzeResp.Source.Path,
+		stepID:   "create-env-file",
+		title:    "Prepare local .env file",
+		command:  "instantrepo internal:prepare-env",
+		cwd:      analyzeResp.Analysis.RepoPath,
+	}
+	return s.finishEnvDraftAction(ctx, localPath, analyzeResp, action, result, err, startedAt, finishedAt)
+}
+
 func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values map[string]string) (domain.ExecuteResponse, error) {
 	localPath = strings.TrimSpace(localPath)
 	analyzeResp, err := s.Analyze(ctx, domain.AnalyzeRequest{LocalPath: localPath})

@@ -183,6 +183,39 @@ func applyEnvDraftValues(targets []domain.EnvDraftTarget, values map[string]stri
 	}
 }
 
+func applyEditedEnvDraftValues(targets []domain.EnvDraftTarget, edited []domain.EnvDraftTarget) {
+	editedByTarget := map[string]map[string]domain.EnvDraftValue{}
+	for _, target := range edited {
+		key := strings.TrimSpace(target.RelativePath)
+		if key == "" {
+			continue
+		}
+		values := map[string]domain.EnvDraftValue{}
+		for _, value := range target.Values {
+			values[value.Name] = value
+		}
+		editedByTarget[key] = values
+	}
+
+	for targetIndex := range targets {
+		values := editedByTarget[targets[targetIndex].RelativePath]
+		if len(values) == 0 {
+			continue
+		}
+		for valueIndex := range targets[targetIndex].Values {
+			name := targets[targetIndex].Values[valueIndex].Name
+			editedValue, ok := values[name]
+			if !ok {
+				continue
+			}
+			targets[targetIndex].Values[valueIndex].Value = editedValue.Value
+			if editedValue.Provenance.Source != "" {
+				targets[targetIndex].Values[valueIndex].Provenance = editedValue.Provenance
+			}
+		}
+	}
+}
+
 func envDraftExecutionResult(stepID, command, cwd string, saveResult domain.EnvSaveResult, started time.Time) domain.ExecutionResult {
 	return domain.ExecutionResult{
 		StepID:    stepID,

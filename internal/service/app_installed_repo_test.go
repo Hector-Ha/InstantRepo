@@ -530,6 +530,97 @@ func TestSaveRawEnvRejectsMultiTargetDraft(t *testing.T) {
 	}
 }
 
+func TestGenerateStructuredEnvDraftReturnsGroupedTargets(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	webDir := filepath.Join(repoPath, "web")
+	if err := os.MkdirAll(apiDir, 0o755); err != nil {
+		t.Fatalf("create api dir: %v", err)
+	}
+	if err := os.MkdirAll(webDir, 0o755); err != nil {
+		t.Fatalf("create web dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(apiDir, ".env.example"), []byte("API_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write api env template: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, ".env.example"), []byte("API_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write web env template: %v", err)
+	}
+
+	app := newInstalledRepoTestApp(&recordingInstalledRepoStore{})
+	draft, err := app.GenerateEnvDraft(context.Background(), repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft returned error: %v", err)
+	}
+
+	apiTarget := envDraftTargetByRelativePath(t, draft, filepath.Join("api", ".env"))
+	webTarget := envDraftTargetByRelativePath(t, draft, filepath.Join("web", ".env"))
+	if envDraftTargetValue(t, apiTarget, "API_URL").Name != "API_URL" {
+		t.Fatalf("expected api API_URL in structured draft")
+	}
+	if envDraftTargetValue(t, webTarget, "API_URL").Name != "API_URL" {
+		t.Fatalf("expected web API_URL in structured draft")
+	}
+}
+
+func TestSaveStructuredEnvDraftSavesAllTargetsByTargetIdentity(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	webDir := filepath.Join(repoPath, "web")
+	if err := os.MkdirAll(apiDir, 0o755); err != nil {
+		t.Fatalf("create api dir: %v", err)
+	}
+	if err := os.MkdirAll(webDir, 0o755); err != nil {
+		t.Fatalf("create web dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(apiDir, ".env.example"), []byte("API_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write api env template: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, ".env.example"), []byte("API_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write web env template: %v", err)
+	}
+
+	setupStore := &recordingInstalledRepoStore{}
+	app := newInstalledRepoTestApp(setupStore)
+	draft, err := app.GenerateEnvDraft(context.Background(), repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft returned error: %v", err)
+	}
+	for targetIndex := range draft.Targets {
+		for valueIndex := range draft.Targets[targetIndex].Values {
+			if draft.Targets[targetIndex].RelativePath == filepath.Join("api", ".env") {
+				draft.Targets[targetIndex].Values[valueIndex].Value = "http://localhost:8080"
+			}
+			if draft.Targets[targetIndex].RelativePath == filepath.Join("web", ".env") {
+				draft.Targets[targetIndex].Values[valueIndex].Value = "http://localhost:5173"
+			}
+		}
+	}
+
+	resp, err := app.SaveStructuredEnvDraft(context.Background(), repoPath, draft)
+	if err != nil {
+		t.Fatalf("SaveStructuredEnvDraft returned error: %v", err)
+	}
+	if !resp.Result.Succeeded {
+		t.Fatalf("expected structured save to succeed, got %+v", resp.Result)
+	}
+
+	apiRaw, err := os.ReadFile(filepath.Join(apiDir, ".env"))
+	if err != nil {
+		t.Fatalf("read api env: %v", err)
+	}
+	webRaw, err := os.ReadFile(filepath.Join(webDir, ".env"))
+	if err != nil {
+		t.Fatalf("read web env: %v", err)
+	}
+	if !strings.Contains(string(apiRaw), "API_URL=http://localhost:8080") {
+		t.Fatalf("expected api target value, got:\n%s", string(apiRaw))
+	}
+	if !strings.Contains(string(webRaw), "API_URL=http://localhost:5173") {
+		t.Fatalf("expected web target value, got:\n%s", string(webRaw))
+	}
+}
+
 func TestSaveRawEnvFailurePersistsFailedGuardedSetupStepWithoutRawEnvContent(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("OPENAI_API_KEY=\n"), 0o644); err != nil {
@@ -663,4 +754,26 @@ func stepIDForCommand(t *testing.T, steps []domain.ExecutionStep, command string
 	}
 	t.Fatalf("step command %q not found in %+v", command, steps)
 	return ""
+}
+
+func envDraftTargetByRelativePath(t *testing.T, draft domain.EnvDraft, relativePath string) domain.EnvDraftTarget {
+	t.Helper()
+	for _, target := range draft.Targets {
+		if target.RelativePath == relativePath {
+			return target
+		}
+	}
+	t.Fatalf("expected target %s in draft %+v", relativePath, draft)
+	return domain.EnvDraftTarget{}
+}
+
+func envDraftTargetValue(t *testing.T, target domain.EnvDraftTarget, name string) domain.EnvDraftValue {
+	t.Helper()
+	for _, value := range target.Values {
+		if value.Name == name {
+			return value
+		}
+	}
+	t.Fatalf("expected value %s in target %+v", name, target)
+	return domain.EnvDraftValue{}
 }

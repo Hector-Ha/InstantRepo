@@ -117,6 +117,7 @@ body::before {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -138,6 +139,38 @@ textarea {
   display: grid;
   gap: 16px;
   margin-bottom: 28px;
+}
+
+.app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.nav-tab,
+.segmented-control button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.nav-tab.active,
+.segmented-control button.active {
+  border-color: var(--border-active);
+  background: var(--accent-glow);
+  color: var(--accent);
 }
 
 .page-header h1 {
@@ -336,6 +369,7 @@ textarea {
 }
 
 .field input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -357,6 +391,7 @@ textarea::placeholder {
 }
 
 .field input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--border-active);
@@ -608,6 +643,8 @@ textarea:focus {
 /* ─── Env Section ───────────────────────────────────────────── */
 
 .env-info,
+.env-target-list,
+.env-value-list,
 .activity-list,
 .steps-list {
   display: grid;
@@ -649,6 +686,126 @@ textarea {
   background: var(--bg-inset);
   border-color: var(--border);
   border-radius: var(--radius);
+}
+
+.env-draft-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.segmented-control {
+  display: inline-flex;
+  width: fit-content;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.env-target {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.env-target__header,
+.env-value-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.env-target__header {
+  align-items: center;
+}
+
+.env-target__header h3 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+.env-target__header span,
+.env-value-row small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.env-value-row {
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.env-value-row__main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 6px;
+}
+
+.env-value-row label {
+  display: grid;
+  gap: 6px;
+}
+
+.env-value-row label span {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.env-value-row input,
+select {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.env-attention {
+  max-width: 320px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--warning);
+  font-size: 0.75rem;
+}
+
+.raw-target-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.vault-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  width: fit-content;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+}
+
+.vault-tag code {
+  font-family: var(--font-mono);
+  color: var(--warning);
+}
+
+.vault-tag button {
+  border: 0;
+  background: transparent;
+  color: var(--warning);
+  cursor: pointer;
+  font-weight: 700;
 }
 
 /* ─── Steps ─────────────────────────────────────────────────── */

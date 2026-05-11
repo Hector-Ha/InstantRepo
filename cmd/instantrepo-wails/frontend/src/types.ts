@@ -43,6 +43,7 @@ export interface EnvVarRequirement {
   source: string;
   required: boolean;
   secret: boolean;
+  confidence?: number;
   currentStatus: string;
   fillStrategy: string;
   service?: string;
@@ -55,6 +56,39 @@ export interface EnvironmentConfig {
   targetPath?: string;
   targetExists: boolean;
   variables: EnvVarRequirement[];
+}
+
+export interface EnvValueProvenance {
+  source: string;
+}
+
+export interface EnvVaultBinding {
+  fingerprint: string;
+  label?: string;
+}
+
+export interface EnvDraftValue {
+  name: string;
+  value: string;
+  secret: boolean;
+  confidence: number;
+  valueClass?: string;
+  instructions?: string[];
+  attention?: string[];
+  provenance: EnvValueProvenance;
+  vaultBinding?: EnvVaultBinding;
+}
+
+export interface EnvDraftTarget {
+  relativePath: string;
+  absolutePath: string;
+  originalContent: string;
+  values: EnvDraftValue[];
+}
+
+export interface EnvDraft {
+  repoPath: string;
+  targets: EnvDraftTarget[];
 }
 
 export interface ServiceDependency {

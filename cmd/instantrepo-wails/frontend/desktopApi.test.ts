@@ -15,10 +15,15 @@ test("desktop API calls Wails bridge when it exists", async () => {
       main: {
         App: {
           ListInstalledRepos: async () => ({ repos: [] }),
+          GenerateEnvDraft: async () => ({ repoPath: "C:\\repo", targets: [] }),
         },
       },
     },
   });
 
   await expect(api.ListInstalledRepos()).resolves.toEqual({ repos: [] });
+  await expect(api.GenerateEnvDraft("C:\\repo")).resolves.toEqual({
+    repoPath: "C:\\repo",
+    targets: [],
+  });
 });

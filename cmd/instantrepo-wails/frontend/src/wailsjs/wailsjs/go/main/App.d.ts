@@ -10,7 +10,7 @@ export function ExecuteStep(arg1:string,arg2:string,arg3:string,arg4:boolean):Pr
 
 export function ExportRepoDiagnostics(arg1:string):Promise<domain.RepoDiagnosticExport>;
 
-export function GenerateEnvDraft(arg1:string):Promise<string>;
+export function GenerateEnvDraft(arg1:string):Promise<domain.EnvDraft>;
 
 export function ImportRepository(arg1:string,arg2:string):Promise<domain.AnalyzeResponse>;
 
@@ -19,6 +19,8 @@ export function InstalledRepoDetails(arg1:number):Promise<domain.InstalledRepoDe
 export function ListInstalledRepos():Promise<domain.InstalledRepoManagerResponse>;
 
 export function OpenDirectory():Promise<string>;
+
+export function SaveEnvDraft(arg1:string,arg2:domain.EnvDraft):Promise<domain.ExecuteResponse>;
 
 export function SaveEnvFile(arg1:string,arg2:string):Promise<domain.ExecuteResponse>;
 

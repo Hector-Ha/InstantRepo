@@ -224,11 +224,28 @@ export namespace domain {
 	        this.instructions = source["instructions"];
 	    }
 	}
+	export class SourceFixSuggestion {
+	    filePath: string;
+	    summary: string;
+	    suggestedText: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SourceFixSuggestion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filePath = source["filePath"];
+	        this.summary = source["summary"];
+	        this.suggestedText = source["suggestedText"];
+	    }
+	}
 	export class EnvVarRequirement {
 	    name: string;
 	    source: string;
 	    required: boolean;
 	    secret: boolean;
+	    confidence?: number;
 	    currentStatus: string;
 	    fillStrategy: string;
 	    service?: string;
@@ -246,6 +263,7 @@ export namespace domain {
 	        this.source = source["source"];
 	        this.required = source["required"];
 	        this.secret = source["secret"];
+	        this.confidence = source["confidence"];
 	        this.currentStatus = source["currentStatus"];
 	        this.fillStrategy = source["fillStrategy"];
 	        this.service = source["service"];
@@ -259,6 +277,7 @@ export namespace domain {
 	    targetPath?: string;
 	    targetExists: boolean;
 	    variables: EnvVarRequirement[];
+	    sourceFixSuggestions?: SourceFixSuggestion[];
 	
 	    static createFrom(source: any = {}) {
 	        return new EnvironmentConfig(source);
@@ -270,6 +289,7 @@ export namespace domain {
 	        this.targetPath = source["targetPath"];
 	        this.targetExists = source["targetExists"];
 	        this.variables = this.convertValues(source["variables"], EnvVarRequirement);
+	        this.sourceFixSuggestions = this.convertValues(source["sourceFixSuggestions"], SourceFixSuggestion);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -308,12 +328,67 @@ export namespace domain {
 	        this.required = source["required"];
 	    }
 	}
+	export class AppTopologySignal {
+	    kind: string;
+	    targetDir?: string;
+	    service?: string;
+	    provider?: string;
+	    port?: number;
+	    confidence: number;
+	    evidence: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppTopologySignal(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.targetDir = source["targetDir"];
+	        this.service = source["service"];
+	        this.provider = source["provider"];
+	        this.port = source["port"];
+	        this.confidence = source["confidence"];
+	        this.evidence = source["evidence"];
+	    }
+	}
+	export class AppTopology {
+	    signals: AppTopologySignal[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AppTopology(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.signals = this.convertValues(source["signals"], AppTopologySignal);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RepositoryAnalysis {
 	    projectName: string;
 	    projectType: string;
 	    repoPath: string;
 	    confidence: number;
 	    evidence: string[];
+	    topology: AppTopology;
 	    requirements: ToolRequirement[];
 	    env: EnvironmentConfig;
 	    services: ServiceDependency[];
@@ -331,6 +406,7 @@ export namespace domain {
 	        this.repoPath = source["repoPath"];
 	        this.confidence = source["confidence"];
 	        this.evidence = source["evidence"];
+	        this.topology = this.convertValues(source["topology"], AppTopology);
 	        this.requirements = this.convertValues(source["requirements"], ToolRequirement);
 	        this.env = this.convertValues(source["env"], EnvironmentConfig);
 	        this.services = this.convertValues(source["services"], ServiceDependency);
@@ -408,6 +484,8 @@ export namespace domain {
 		    return a;
 		}
 	}
+	
+	
 	export class CloneDiskStatus {
 	    status: string;
 	    freeBytes?: number;
@@ -539,6 +617,133 @@ export namespace domain {
 		    return a;
 		}
 	}
+	
+	export class EnvValueProvenance {
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnvValueProvenance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	    }
+	}
+	export class EnvDraftValue {
+	    name: string;
+	    value: string;
+	    secret: boolean;
+	    confidence: number;
+	    valueClass?: string;
+	    instructions?: string[];
+	    attention?: string[];
+	    provenance: EnvValueProvenance;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnvDraftValue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.value = source["value"];
+	        this.secret = source["secret"];
+	        this.confidence = source["confidence"];
+	        this.valueClass = source["valueClass"];
+	        this.instructions = source["instructions"];
+	        this.attention = source["attention"];
+	        this.provenance = this.convertValues(source["provenance"], EnvValueProvenance);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class EnvDraftTarget {
+	    relativePath: string;
+	    absolutePath: string;
+	    originalContent: string;
+	    values: EnvDraftValue[];
+	
+	    static createFrom(source: any = {}) {
+	        return new EnvDraftTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.relativePath = source["relativePath"];
+	        this.absolutePath = source["absolutePath"];
+	        this.originalContent = source["originalContent"];
+	        this.values = this.convertValues(source["values"], EnvDraftValue);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class EnvDraft {
+	    repoPath: string;
+	    targets: EnvDraftTarget[];
+	
+	    static createFrom(source: any = {}) {
+	        return new EnvDraft(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoPath = source["repoPath"];
+	        this.targets = this.convertValues(source["targets"], EnvDraftTarget);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	
 	
 	
@@ -1228,6 +1433,7 @@ export namespace domain {
 		    return a;
 		}
 	}
+	
 	
 	
 	

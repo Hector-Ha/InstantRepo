@@ -38,6 +38,10 @@ export function OpenDirectory() {
   return window['go']['main']['App']['OpenDirectory']();
 }
 
+export function SaveEnvDraft(arg1, arg2) {
+  return window['go']['main']['App']['SaveEnvDraft'](arg1, arg2);
+}
+
 export function SaveEnvFile(arg1, arg2) {
   return window['go']['main']['App']['SaveEnvFile'](arg1, arg2);
 }
