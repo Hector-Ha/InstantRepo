@@ -371,6 +371,46 @@ type EnvVarRequirement struct {
 	Instructions   []string `json:"instructions,omitempty"`
 }
 
+const (
+	EnvValueSourceExistingFile = "existing_file"
+	EnvValueSourceTemplate     = "template"
+	EnvValueSourceDraft        = "draft"
+)
+
+type EnvDraft struct {
+	RepoPath string           `json:"repoPath"`
+	Targets  []EnvDraftTarget `json:"targets"`
+}
+
+type EnvDraftTarget struct {
+	RelativePath    string          `json:"relativePath"`
+	AbsolutePath    string          `json:"absolutePath"`
+	OriginalContent string          `json:"originalContent"`
+	Values          []EnvDraftValue `json:"values"`
+}
+
+type EnvDraftValue struct {
+	Name       string             `json:"name"`
+	Value      string             `json:"value"`
+	Secret     bool               `json:"secret"`
+	Confidence float64            `json:"confidence"`
+	Provenance EnvValueProvenance `json:"provenance"`
+}
+
+type EnvValueProvenance struct {
+	Source string `json:"source"`
+}
+
+type EnvSaveResult struct {
+	Targets []EnvSaveTargetResult `json:"targets"`
+}
+
+type EnvSaveTargetResult struct {
+	RelativePath string `json:"relativePath"`
+	Succeeded    bool   `json:"succeeded"`
+	ErrorKind    string `json:"errorKind,omitempty"`
+}
+
 type ServiceDependency struct {
 	Name         string   `json:"name"`
 	Scope        string   `json:"scope"`

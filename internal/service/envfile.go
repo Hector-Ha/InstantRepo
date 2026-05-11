@@ -71,7 +71,7 @@ func (m *EnvFileManager) prepareWithValues(analysis domain.RepositoryAnalysis, v
 	}
 
 	started := time.Now()
-	
+
 	// Group variables by target dir
 	varsByTarget := make(map[string][]domain.EnvVarRequirement)
 	for _, item := range analysis.Env.Variables {
@@ -83,7 +83,7 @@ func (m *EnvFileManager) prepareWithValues(analysis domain.RepositoryAnalysis, v
 	}
 
 	var allStdout []string
-	
+
 	for targetDir, vars := range varsByTarget {
 		targetPath := filepath.Join(targetDir, ".env")
 		existingValues := readEnvValues(targetPath)
@@ -94,12 +94,12 @@ func (m *EnvFileManager) prepareWithValues(analysis domain.RepositoryAnalysis, v
 			}
 			existingValues[key] = trimmed
 		}
-		
+
 		// Create a local env config per target
 		localEnv := analysis.Env
 		localEnv.Variables = vars
 		localEnv.TargetPath = targetPath
-		
+
 		// Try to find the template if it existed
 		templateLines, _ := loadTemplateLines(localEnv) // Could be empty, handled gracefully
 
@@ -289,4 +289,24 @@ func readEnvValues(path string) map[string]string {
 		values[matches[1]] = cleanWriteValue(matches[2])
 	}
 	return values
+}
+
+func parseEnvAssignments(content string) map[string]string {
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		matches := envLinePattern.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if len(matches) != 3 {
+			continue
+		}
+		values[matches[1]] = cleanWriteValue(matches[2])
+	}
+	return values
+}
+
+func relativeEnvTargetPath(repoPath, targetPath string) string {
+	relative, err := filepath.Rel(repoPath, targetPath)
+	if err != nil {
+		return filepath.Base(targetPath)
+	}
+	return relative
 }
