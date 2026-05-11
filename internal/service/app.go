@@ -227,7 +227,7 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 	var result domain.ExecutionResult
 	switch selected.Type {
 	case "env-setup":
-		result, err = s.envDrafts.Prepare(analyzeResp.Analysis)
+		result, err = s.prepareEnvSetup(ctx, analyzeResp.Analysis, startedAt)
 	default:
 		result, err = s.executor.RunStepWithEvents(runCtx, *selected, redactExecutionEventSink(onEvent))
 	}
@@ -271,6 +271,32 @@ func (s *AppService) ExecuteWithEvents(ctx context.Context, req domain.ExecuteRe
 		Plan:        analyzeResp.Plan,
 		Result:      result,
 	}, nil
+}
+
+func (s *AppService) prepareEnvSetup(ctx context.Context, analysis domain.RepositoryAnalysis, startedAt time.Time) (domain.ExecutionResult, error) {
+	if s.vault == nil {
+		return s.envDrafts.Prepare(analysis)
+	}
+	draft, err := s.envDrafts.BuildDraft(analysis)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	if err := s.vault.ApplyApprovedBindings(ctx, &draft); err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	pendingVaultUses, err := s.vault.ResolveBindings(ctx, &draft)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	saveResult, err := s.envDrafts.SaveAll(draft)
+	if err != nil {
+		return domain.ExecutionResult{}, err
+	}
+	result := envDraftExecutionResult("create-env-file", "instantrepo internal:prepare-env", analysis.RepoPath, saveResult, startedAt)
+	if err := s.vault.RecordResolvedUses(ctx, pendingVaultUses); err != nil {
+		appendEnvMetadataWarning(&result, "Env saved, but vault use metadata could not be updated.")
+	}
+	return result, nil
 }
 
 func (s *AppService) PreviewEnv(ctx context.Context, localPath string) (string, error) {
@@ -318,18 +344,37 @@ func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath strin
 
 	startedAt := time.Now().UTC()
 	draft, err := s.envDrafts.BuildDraft(analyzeResp.Analysis)
+	var pendingVaultUses []domain.EnvVaultUseRecord
 	if err == nil {
 		applyEditedEnvDraftValues(draft.Targets, edited.Targets)
+		preserveExistingServiceCredentialValues(&draft)
 		if s.vault != nil {
-			err = s.vault.ResolveBindings(ctx, &draft)
+			pendingVaultUses, err = s.vault.ResolveBindings(ctx, &draft)
 		}
 	}
 	var result domain.ExecutionResult
+	var candidates []domain.EnvVaultPromptCandidate
 	if err == nil {
 		saveResult, saveErr := s.envDrafts.SaveAll(draft)
 		err = saveErr
 		if saveErr == nil {
 			result = envDraftExecutionResult("create-env-file", "instantrepo internal:prepare-env", analyzeResp.Analysis.RepoPath, saveResult, startedAt)
+			if s.vault != nil {
+				if recordErr := s.vault.RecordResolvedUses(ctx, pendingVaultUses); recordErr != nil {
+					appendEnvMetadataWarning(&result, "Env saved, but vault use metadata could not be updated.")
+				} else {
+					fromVault := map[string]bool{}
+					for _, record := range pendingVaultUses {
+						fromVault[promptCandidateKey(record.RepoPath, record.TargetRelativePath, record.VariableName)] = true
+					}
+					promptCandidates, promptErr := s.vault.PromptCandidates(ctx, &draft, fromVault)
+					if promptErr != nil {
+						appendEnvMetadataWarning(&result, "Env saved, but vault prompt metadata could not be updated.")
+					} else {
+						candidates = promptCandidates
+					}
+				}
+			}
 		}
 	}
 	finishedAt := time.Now().UTC()
@@ -340,7 +385,12 @@ func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath strin
 		command:  "instantrepo internal:prepare-env",
 		cwd:      analyzeResp.Analysis.RepoPath,
 	}
-	return s.finishEnvDraftAction(ctx, localPath, analyzeResp, action, result, err, startedAt, finishedAt)
+	resp, finishErr := s.finishEnvDraftAction(ctx, localPath, analyzeResp, action, result, err, startedAt, finishedAt)
+	if finishErr != nil {
+		return resp, finishErr
+	}
+	resp.VaultPromptCandidates = candidates
+	return resp, nil
 }
 
 func (s *AppService) SaveEnvValues(ctx context.Context, localPath string, values map[string]string) (domain.ExecuteResponse, error) {
@@ -428,6 +478,16 @@ func (s *AppService) finishEnvDraftAction(ctx context.Context, localPath string,
 		Plan:        analyzeResp.Plan,
 		Result:      result,
 	}, nil
+}
+
+func appendEnvMetadataWarning(result *domain.ExecutionResult, message string) {
+	if result == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+	if strings.TrimSpace(result.Stderr) != "" && !strings.HasSuffix(result.Stderr, "\n") {
+		result.Stderr += "\n"
+	}
+	result.Stderr += message + "\n"
 }
 
 func inferRepoSourceType(repoURL string) string {

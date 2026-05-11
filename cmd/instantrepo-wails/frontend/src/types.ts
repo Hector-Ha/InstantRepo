@@ -82,6 +82,21 @@ export interface EnvDraftValue {
   attention?: string[];
   provenance: EnvValueProvenance;
   vaultBinding?: EnvVaultBinding;
+  hasExistingValue?: boolean;
+}
+
+export interface EnvVaultPromptCandidate {
+  repoPath: string;
+  targetRelativePath: string;
+  variableName: string;
+  provider: string;
+  fingerprintFragment: string;
+}
+
+export interface EnvVaultPromptSuppression {
+  repoPath: string;
+  targetRelativePath: string;
+  variableName: string;
 }
 
 export interface EnvDraftTarget {
@@ -179,6 +194,7 @@ export interface ExecutionResult {
 
 export interface ExecuteResponse extends AnalyzeSnapshot {
   result: ExecutionResult;
+  vaultPromptCandidates?: EnvVaultPromptCandidate[];
 }
 
 export interface InstalledRepoSummary {

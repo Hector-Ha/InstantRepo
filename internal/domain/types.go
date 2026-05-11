@@ -277,11 +277,12 @@ const (
 )
 
 type ExecuteResponse struct {
-	Source      RepoSource         `json:"source"`
-	Analysis    RepositoryAnalysis `json:"analysis"`
-	Environment EnvironmentReport  `json:"environment"`
-	Plan        SetupPlan          `json:"plan"`
-	Result      ExecutionResult    `json:"result"`
+	Source                RepoSource                `json:"source"`
+	Analysis              RepositoryAnalysis        `json:"analysis"`
+	Environment           EnvironmentReport         `json:"environment"`
+	Plan                  SetupPlan                 `json:"plan"`
+	Result                ExecutionResult           `json:"result"`
+	VaultPromptCandidates []EnvVaultPromptCandidate `json:"vaultPromptCandidates,omitempty"`
 }
 
 type RepoSource struct {
@@ -426,15 +427,16 @@ type EnvDraftTarget struct {
 }
 
 type EnvDraftValue struct {
-	Name         string             `json:"name"`
-	Value        string             `json:"value"`
-	Secret       bool               `json:"secret"`
-	Confidence   float64            `json:"confidence"`
-	ValueClass   string             `json:"valueClass,omitempty"`
-	Instructions []string           `json:"instructions,omitempty"`
-	Attention    []string           `json:"attention,omitempty"`
-	Provenance   EnvValueProvenance `json:"provenance"`
-	VaultBinding *EnvVaultBinding   `json:"vaultBinding,omitempty"`
+	Name             string             `json:"name"`
+	Value            string             `json:"value"`
+	Secret           bool               `json:"secret"`
+	Confidence       float64            `json:"confidence"`
+	ValueClass       string             `json:"valueClass,omitempty"`
+	Instructions     []string           `json:"instructions,omitempty"`
+	Attention        []string           `json:"attention,omitempty"`
+	Provenance       EnvValueProvenance `json:"provenance"`
+	VaultBinding     *EnvVaultBinding   `json:"vaultBinding,omitempty"`
+	HasExistingValue bool               `json:"hasExistingValue,omitempty"`
 }
 
 type EnvValueProvenance struct {
@@ -518,6 +520,21 @@ type EnvVaultBinding struct {
 	DisplayName         string `json:"displayName,omitempty"`
 	FingerprintFragment string `json:"fingerprint"`
 	Status              string `json:"status"`
+}
+
+type EnvVaultPromptCandidate struct {
+	RepoPath            string `json:"repoPath"`
+	TargetRelativePath  string `json:"targetRelativePath"`
+	VariableName        string `json:"variableName"`
+	Provider            string `json:"provider"`
+	FingerprintFragment string `json:"fingerprintFragment"`
+}
+
+type EnvVaultPromptSuppression struct {
+	RepoPath           string    `json:"repoPath"`
+	TargetRelativePath string    `json:"targetRelativePath"`
+	VariableName       string    `json:"variableName"`
+	SuppressedAt       time.Time `json:"suppressedAt"`
 }
 
 type ServiceDependency struct {

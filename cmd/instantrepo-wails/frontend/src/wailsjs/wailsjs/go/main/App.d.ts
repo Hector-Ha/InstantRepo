@@ -4,6 +4,8 @@ import {domain} from '../models';
 
 export function AnalyzeRepository(arg1:string,arg2:string):Promise<domain.AnalyzeResponse>;
 
+export function ApproveEnvVaultEntry(arg1:domain.EnvVaultApproval):Promise<void>;
+
 export function ClonePreflight(arg1:string,arg2:string):Promise<domain.ClonePreflightResponse>;
 
 export function ExecuteStep(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<domain.ExecuteResponse>;
@@ -18,10 +20,16 @@ export function InstalledRepoDetails(arg1:number):Promise<domain.InstalledRepoDe
 
 export function ListInstalledRepos():Promise<domain.InstalledRepoManagerResponse>;
 
+export function MarkEnvVaultEntryStatus(arg1:number,arg2:string):Promise<void>;
+
 export function OpenDirectory():Promise<string>;
 
 export function SaveEnvDraft(arg1:string,arg2:domain.EnvDraft):Promise<domain.ExecuteResponse>;
 
 export function SaveEnvFile(arg1:string,arg2:string):Promise<domain.ExecuteResponse>;
 
+export function SaveEnvVaultCredential(arg1:domain.EnvVaultSaveRequest):Promise<domain.EnvVaultSaveResponse>;
+
 export function ShellInfo():Promise<Record<string, string>>;
+
+export function SuppressEnvVaultPrompt(arg1:domain.EnvVaultPromptSuppression):Promise<void>;

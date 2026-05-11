@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,6 +59,82 @@ func TestBuildEnvDraftPreservesExistingFileContentAndProvenance(t *testing.T) {
 	}
 	if value.Confidence != 1 {
 		t.Fatalf("expected confidence 1, got %v", value.Confidence)
+	}
+}
+
+func TestBuildEnvDraftRedactsUntrackedServiceCredentialFromOriginalContent(t *testing.T) {
+	repoPath := t.TempDir()
+	targetPath := filepath.Join(repoPath, ".env")
+	existing := "SENDGRID_API_KEY=sg-existing-sensitive-value\nCUSTOM_FLAG=keep-me\n"
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write target env: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			TargetPath: targetPath,
+			Variables: []domain.EnvVarRequirement{
+				{Name: "OPENAI_API_KEY", Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	rawJSON, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	if strings.Contains(string(rawJSON), "sg-existing-sensitive-value") {
+		t.Fatalf("expected untracked service credential to be redacted from draft JSON, got:\n%s", string(rawJSON))
+	}
+	target := envDraftTarget(t, draft, ".env")
+	if !strings.Contains(target.OriginalContent, "SENDGRID_API_KEY=") {
+		t.Fatalf("expected credential assignment shape preserved, got %q", target.OriginalContent)
+	}
+	if !strings.Contains(target.OriginalContent, "CUSTOM_FLAG=keep-me") {
+		t.Fatalf("expected non-credential assignment preserved, got %q", target.OriginalContent)
+	}
+}
+
+func TestSaveAllPreservesUntrackedExistingServiceCredential(t *testing.T) {
+	repoPath := t.TempDir()
+	targetPath := filepath.Join(repoPath, ".env")
+	existing := "SENDGRID_API_KEY=sg-existing-sensitive-value\nCUSTOM_FLAG=keep-me\n"
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write target env: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			TargetPath: targetPath,
+			Variables: []domain.EnvVarRequirement{
+				{Name: "OPENAI_API_KEY", Secret: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+	if _, err := manager.SaveAll(draft); err != nil {
+		t.Fatalf("SaveAll returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read target env: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "SENDGRID_API_KEY=sg-existing-sensitive-value") {
+		t.Fatalf("expected untracked service credential to be preserved on disk save, got:\n%s", content)
+	}
+	if !strings.Contains(content, "CUSTOM_FLAG=keep-me") {
+		t.Fatalf("expected unknown non-credential value to be preserved, got:\n%s", content)
 	}
 }
 

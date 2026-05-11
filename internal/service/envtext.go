@@ -52,3 +52,44 @@ func relativeEnvTargetPath(repoPath, targetPath string) string {
 	}
 	return relative
 }
+
+func redactServiceCredentialAssignments(content string, serviceCredentialNames map[string]bool) string {
+	if len(serviceCredentialNames) == 0 {
+		return content
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		matches := envLinePattern.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if len(matches) != 3 {
+			continue
+		}
+		name := matches[1]
+		if !serviceCredentialNames[name] {
+			continue
+		}
+		if strings.TrimSpace(matches[2]) == "" {
+			continue
+		}
+		lines[i] = name + "="
+	}
+	return strings.Join(lines, "\n")
+}
+
+func replaceEnvAssignments(content string, values map[string]string) string {
+	if len(values) == 0 {
+		return content
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		matches := envLinePattern.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if len(matches) != 3 {
+			continue
+		}
+		value, ok := values[matches[1]]
+		if !ok {
+			continue
+		}
+		lines[i] = formatEnvAssignment(matches[1], value)
+	}
+	return strings.Join(lines, "\n")
+}

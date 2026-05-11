@@ -135,6 +135,8 @@ func (m *EnvDraftManager) SaveAll(draft domain.EnvDraft) (domain.EnvSaveResult, 
 		}
 		return result, err
 	}
+	preserveExistingServiceCredentialValues(&draft)
+	m.preserveUntrackedServiceCredentialValues(&draft)
 
 	rollbacks := []envTargetRollback{}
 	for _, target := range draft.Targets {
@@ -162,6 +164,68 @@ func (m *EnvDraftManager) SaveAll(draft domain.EnvDraft) (domain.EnvSaveResult, 
 		})
 	}
 	return result, nil
+}
+
+func (m *EnvDraftManager) preserveUntrackedServiceCredentialValues(draft *domain.EnvDraft) {
+	if draft == nil {
+		return
+	}
+	for targetIndex := range draft.Targets {
+		target := &draft.Targets[targetIndex]
+		raw, err := os.ReadFile(target.AbsolutePath)
+		if err != nil {
+			continue
+		}
+		existing := parseEnvAssignments(string(raw))
+		tracked := map[string]bool{}
+		for _, value := range target.Values {
+			tracked[value.Name] = true
+		}
+		preserved := map[string]string{}
+		for name, existingValue := range existing {
+			if tracked[name] || strings.TrimSpace(existingValue) == "" {
+				continue
+			}
+			if decision, ok := m.envCatalog().Classify(name); ok && decision.ValueClass == domain.EnvValueClassServiceCredential {
+				preserved[name] = existingValue
+			}
+		}
+		target.OriginalContent = replaceEnvAssignments(target.OriginalContent, preserved)
+	}
+}
+
+func preserveExistingServiceCredentialValues(draft *domain.EnvDraft) {
+	if draft == nil {
+		return
+	}
+	for targetIndex := range draft.Targets {
+		target := &draft.Targets[targetIndex]
+		raw, err := os.ReadFile(target.AbsolutePath)
+		if err != nil {
+			continue
+		}
+		existing := parseEnvAssignments(string(raw))
+		for valueIndex := range target.Values {
+			value := &target.Values[valueIndex]
+			if value.ValueClass != domain.EnvValueClassServiceCredential {
+				continue
+			}
+			if !value.HasExistingValue {
+				continue
+			}
+			existingValue, ok := existing[value.Name]
+			if !ok || strings.TrimSpace(existingValue) == "" {
+				continue
+			}
+			if strings.TrimSpace(value.Value) != "" {
+				value.VaultBinding = nil
+				continue
+			}
+			value.Value = existingValue
+			value.VaultBinding = nil
+			value.Provenance.Source = domain.EnvValueSourceExistingFile
+		}
+	}
 }
 
 func applyEnvDraftValues(targets []domain.EnvDraftTarget, values map[string]string) {
@@ -365,10 +429,21 @@ func (m *EnvDraftManager) buildEnvDraftTarget(repoPath, targetPath string, vars 
 	valuesByName := parseEnvAssignments(original)
 
 	target := domain.EnvDraftTarget{
-		RelativePath:    relativeEnvTargetPath(repoPath, targetPath),
-		AbsolutePath:    targetPath,
-		OriginalContent: original,
+		RelativePath: relativeEnvTargetPath(repoPath, targetPath),
+		AbsolutePath: targetPath,
 	}
+	serviceCredentialNames := map[string]bool{}
+	for _, item := range vars {
+		if decision, ok := m.envCatalog().Classify(item.Name); ok && decision.ValueClass == domain.EnvValueClassServiceCredential {
+			serviceCredentialNames[item.Name] = true
+		}
+	}
+	for name := range valuesByName {
+		if decision, ok := m.envCatalog().Classify(name); ok && decision.ValueClass == domain.EnvValueClassServiceCredential {
+			serviceCredentialNames[name] = true
+		}
+	}
+	target.OriginalContent = redactServiceCredentialAssignments(original, serviceCredentialNames)
 	for _, item := range vars {
 		confidence := item.Confidence
 		if confidence == 0 {
@@ -412,6 +487,10 @@ func (m *EnvDraftManager) buildEnvDraftTarget(repoPath, targetPath string, vars 
 			value.Provenance.Source = domain.EnvValueSourceExistingFile
 			if value.ValueClass == domain.EnvValueClassGeneratedLocalSecret && isWeakCustomEnvSecret(existing) {
 				value.Attention = append(value.Attention, "Existing local secret looks weak. Review it before running the app.")
+			}
+			if value.ValueClass == domain.EnvValueClassServiceCredential {
+				value.HasExistingValue = true
+				value.Value = ""
 			}
 		}
 		target.Values = append(target.Values, value)

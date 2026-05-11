@@ -629,6 +629,46 @@ DO UPDATE SET used_at = excluded.used_at, use_count = env_vault_use_records.use_
 	return nil
 }
 
+func (s *SQLiteStore) SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO env_vault_prompt_suppressions (
+	repo_path,
+	target_relative_path,
+	variable_name,
+	suppressed_at
+) VALUES (?, ?, ?, ?)
+ON CONFLICT(repo_path, target_relative_path, variable_name)
+DO UPDATE SET suppressed_at = excluded.suppressed_at;
+`,
+		suppression.RepoPath,
+		suppression.TargetRelativePath,
+		suppression.VariableName,
+		formatTime(now),
+	)
+	if err != nil {
+		return fmt.Errorf("suppress env vault prompt: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) IsEnvVaultPromptSuppressed(ctx context.Context, repoPath, targetRelativePath, variableName string) (bool, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `
+SELECT id
+FROM env_vault_prompt_suppressions
+WHERE repo_path = ? AND target_relative_path = ? AND variable_name = ?
+LIMIT 1;
+`, repoPath, targetRelativePath, variableName).Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query env vault prompt suppression: %w", err)
+	}
+	return true, nil
+}
+
 func (s *SQLiteStore) EnvVaultUseRecords(ctx context.Context, entryID int64) ([]domain.EnvVaultUseRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, entry_id, repo_path, target_relative_path, variable_name, used_at, use_count
@@ -882,6 +922,15 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS env_vault_use_records_unique
 			ON env_vault_use_records(entry_id, repo_path, target_relative_path, variable_name);`,
+		`CREATE TABLE IF NOT EXISTS env_vault_prompt_suppressions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			repo_path TEXT NOT NULL,
+			target_relative_path TEXT NOT NULL,
+			variable_name TEXT NOT NULL,
+			suppressed_at TEXT NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS env_vault_prompt_suppressions_unique
+			ON env_vault_prompt_suppressions(repo_path, target_relative_path, variable_name);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {

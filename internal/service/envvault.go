@@ -34,6 +34,8 @@ type EnvVaultStore interface {
 	SaveEnvVaultApproval(ctx context.Context, approval domain.EnvVaultApproval) error
 	ApprovedEnvVaultEntries(ctx context.Context, repoPath, targetRelativePath, variableName string) ([]domain.EnvVaultEntryMetadata, error)
 	RecordEnvVaultUse(ctx context.Context, record domain.EnvVaultUseRecord) error
+	SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error
+	IsEnvVaultPromptSuppressed(ctx context.Context, repoPath, targetRelativePath, variableName string) (bool, error)
 }
 
 type EnvVaultService struct {
@@ -69,6 +71,13 @@ func (s *AppService) MarkEnvVaultEntryStatus(ctx context.Context, entryID int64,
 		return ErrCredentialStoreUnavailable
 	}
 	return s.vault.MarkStatus(ctx, entryID, status)
+}
+
+func (s *AppService) SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
+	if s.vault == nil {
+		return ErrCredentialStoreUnavailable
+	}
+	return s.vault.SuppressPrompt(ctx, suppression)
 }
 
 func (v *EnvVaultService) SaveCredential(ctx context.Context, req domain.EnvVaultSaveRequest) (domain.EnvVaultSaveResponse, error) {
@@ -158,6 +167,9 @@ func (v *EnvVaultService) ApplyApprovedBindings(ctx context.Context, draft *doma
 		target := &draft.Targets[targetIndex]
 		for valueIndex := range target.Values {
 			value := &target.Values[valueIndex]
+			if value.HasExistingValue {
+				continue
+			}
 			if strings.TrimSpace(value.Value) != "" || value.ValueClass != domain.EnvValueClassServiceCredential {
 				continue
 			}
@@ -176,10 +188,11 @@ func (v *EnvVaultService) ApplyApprovedBindings(ctx context.Context, draft *doma
 	return nil
 }
 
-func (v *EnvVaultService) ResolveBindings(ctx context.Context, draft *domain.EnvDraft) error {
+func (v *EnvVaultService) ResolveBindings(ctx context.Context, draft *domain.EnvDraft) ([]domain.EnvVaultUseRecord, error) {
 	if v == nil || v.store == nil || v.credential == nil || draft == nil {
-		return nil
+		return nil, nil
 	}
+	var pending []domain.EnvVaultUseRecord
 	for targetIndex := range draft.Targets {
 		target := &draft.Targets[targetIndex]
 		for valueIndex := range target.Values {
@@ -189,35 +202,109 @@ func (v *EnvVaultService) ResolveBindings(ctx context.Context, draft *domain.Env
 			}
 			entry, err := v.store.EnvVaultEntryByID(ctx, value.VaultBinding.EntryID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if entry.Status != domain.EnvVaultStatusReady || !strings.EqualFold(entry.VariableName, value.Name) {
-				return fmt.Errorf("vault entry for %s is not ready", value.Name)
+				return nil, fmt.Errorf("vault entry for %s is not ready", value.Name)
 			}
 			approved, err := v.store.ApprovedEnvVaultEntries(ctx, draft.RepoPath, target.RelativePath, value.Name)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !containsVaultEntry(approved, entry.ID) {
-				return fmt.Errorf("vault entry for %s is not approved", value.Name)
+				return nil, fmt.Errorf("vault entry for %s is not approved", value.Name)
 			}
 			secret, err := v.credential.Get(ctx, entry.CredentialKey)
 			if err != nil {
-				return fmt.Errorf("read credential: %w", err)
+				return nil, fmt.Errorf("read credential: %w", err)
 			}
 			value.Value = secret
 			value.VaultBinding = nil
-			if err := v.store.RecordEnvVaultUse(ctx, domain.EnvVaultUseRecord{
+			pending = append(pending, domain.EnvVaultUseRecord{
 				EntryID:            entry.ID,
 				RepoPath:           draft.RepoPath,
 				TargetRelativePath: target.RelativePath,
 				VariableName:       value.Name,
-			}); err != nil {
-				return err
-			}
+			})
+		}
+	}
+	return pending, nil
+}
+
+func (v *EnvVaultService) RecordResolvedUses(ctx context.Context, records []domain.EnvVaultUseRecord) error {
+	if v == nil || v.store == nil {
+		return nil
+	}
+	for _, record := range records {
+		if err := v.store.RecordEnvVaultUse(ctx, record); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (v *EnvVaultService) SuppressPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
+	if v == nil || v.store == nil {
+		return nil
+	}
+	suppression.RepoPath = strings.TrimSpace(suppression.RepoPath)
+	suppression.TargetRelativePath = strings.TrimSpace(suppression.TargetRelativePath)
+	suppression.VariableName = strings.ToUpper(strings.TrimSpace(suppression.VariableName))
+	if suppression.RepoPath == "" || suppression.TargetRelativePath == "" || suppression.VariableName == "" {
+		return fmt.Errorf("repo, target, and variable are required")
+	}
+	return v.store.SuppressEnvVaultPrompt(ctx, suppression)
+}
+
+func (v *EnvVaultService) PromptCandidates(ctx context.Context, draft *domain.EnvDraft, fromVault map[string]bool) ([]domain.EnvVaultPromptCandidate, error) {
+	if v == nil || v.store == nil || draft == nil {
+		return nil, nil
+	}
+	var candidates []domain.EnvVaultPromptCandidate
+	for targetIndex := range draft.Targets {
+		target := &draft.Targets[targetIndex]
+		for valueIndex := range target.Values {
+			value := &target.Values[valueIndex]
+			if value.ValueClass != domain.EnvValueClassServiceCredential {
+				continue
+			}
+			if strings.TrimSpace(value.Value) == "" {
+				continue
+			}
+			key := promptCandidateKey(draft.RepoPath, target.RelativePath, value.Name)
+			if fromVault[key] {
+				continue
+			}
+			suppressed, err := v.store.IsEnvVaultPromptSuppressed(ctx, draft.RepoPath, target.RelativePath, value.Name)
+			if err != nil {
+				return nil, err
+			}
+			if suppressed {
+				continue
+			}
+			provider := normalizeVaultProvider("", value.Name)
+			fingerprint := fingerprintCredential(value.Value)
+			existing, err := v.store.EnvVaultEntryByProviderFingerprint(ctx, provider, fingerprint)
+			if err == nil && existing.ID != 0 {
+				continue
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("check env vault duplicate fingerprint: %w", err)
+			}
+			candidates = append(candidates, domain.EnvVaultPromptCandidate{
+				RepoPath:            draft.RepoPath,
+				TargetRelativePath:  target.RelativePath,
+				VariableName:        value.Name,
+				Provider:            provider,
+				FingerprintFragment: fingerprint[:12],
+			})
+		}
+	}
+	return candidates, nil
+}
+
+func promptCandidateKey(repoPath, targetRelativePath, variableName string) string {
+	return strings.Join([]string{repoPath, targetRelativePath, strings.ToUpper(variableName)}, "\x00")
 }
 
 func (v *EnvVaultService) isServiceCredential(variableName string) bool {

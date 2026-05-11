@@ -662,6 +662,7 @@ export namespace domain {
 	    attention?: string[];
 	    provenance: EnvValueProvenance;
 	    vaultBinding?: EnvVaultBinding;
+	    hasExistingValue?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EnvDraftValue(source);
@@ -678,6 +679,7 @@ export namespace domain {
 	        this.attention = source["attention"];
 	        this.provenance = this.convertValues(source["provenance"], EnvValueProvenance);
 	        this.vaultBinding = this.convertValues(source["vaultBinding"], EnvVaultBinding);
+	        this.hasExistingValue = source["hasExistingValue"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -770,9 +772,210 @@ export namespace domain {
 	
 	
 	
-	
-	
+	export class EnvVaultApproval {
+	    id: number;
+	    entryId: number;
+	    repoPath: string;
+	    targetRelativePath: string;
+	    variableName: string;
+	    status: string;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
 
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultApproval(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.entryId = source["entryId"];
+	        this.repoPath = source["repoPath"];
+	        this.targetRelativePath = source["targetRelativePath"];
+	        this.variableName = source["variableName"];
+	        this.status = source["status"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+	export class EnvVaultEntry {
+	    id: number;
+	    provider: string;
+	    variableName: string;
+	    displayName: string;
+	    fingerprintFragment: string;
+	    status: string;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultEntry(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.variableName = source["variableName"];
+	        this.displayName = source["displayName"];
+	        this.fingerprintFragment = source["fingerprintFragment"];
+	        this.status = source["status"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class EnvVaultPromptCandidate {
+	    repoPath: string;
+	    targetRelativePath: string;
+	    variableName: string;
+	    provider: string;
+	    fingerprintFragment: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultPromptCandidate(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoPath = source["repoPath"];
+	        this.targetRelativePath = source["targetRelativePath"];
+	        this.variableName = source["variableName"];
+	        this.provider = source["provider"];
+	        this.fingerprintFragment = source["fingerprintFragment"];
+	    }
+	}
+	export class EnvVaultPromptSuppression {
+	    repoPath: string;
+	    targetRelativePath: string;
+	    variableName: string;
+	    // Go type: time
+	    suppressedAt: any;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultPromptSuppression(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoPath = source["repoPath"];
+	        this.targetRelativePath = source["targetRelativePath"];
+	        this.variableName = source["variableName"];
+	        this.suppressedAt = this.convertValues(source["suppressedAt"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class EnvVaultSaveRequest {
+	    provider: string;
+	    variableName: string;
+	    displayName?: string;
+	    value: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultSaveRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.variableName = source["variableName"];
+	        this.displayName = source["displayName"];
+	        this.value = source["value"];
+	    }
+	}
+	export class EnvVaultSaveResponse {
+	    entry?: EnvVaultEntry;
+	    needsReview: boolean;
+	    reviewMessage?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultSaveResponse(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entry = this.convertValues(source["entry"], EnvVaultEntry);
+	        this.needsReview = source["needsReview"];
+	        this.reviewMessage = source["reviewMessage"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	export class ExecutionResult {
 	    stepId: string;
 	    command: string;
@@ -807,6 +1010,7 @@ export namespace domain {
 	    environment: EnvironmentReport;
 	    plan: SetupPlan;
 	    result: ExecutionResult;
+	    vaultPromptCandidates?: EnvVaultPromptCandidate[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ExecuteResponse(source);
@@ -819,6 +1023,7 @@ export namespace domain {
 	        this.environment = this.convertValues(source["environment"], EnvironmentReport);
 	        this.plan = this.convertValues(source["plan"], SetupPlan);
 	        this.result = this.convertValues(source["result"], ExecutionResult);
+	        this.vaultPromptCandidates = this.convertValues(source["vaultPromptCandidates"], EnvVaultPromptCandidate);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

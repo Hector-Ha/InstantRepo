@@ -64,6 +64,22 @@ func (a *App) SaveEnvDraft(localPath string, draft domain.EnvDraft) (domain.Exec
 	return a.service.SaveStructuredEnvDraft(a.appContext(), localPath, draft)
 }
 
+func (a *App) SaveEnvVaultCredential(req domain.EnvVaultSaveRequest) (domain.EnvVaultSaveResponse, error) {
+	return a.service.SaveEnvVaultCredential(a.appContext(), req)
+}
+
+func (a *App) ApproveEnvVaultEntry(approval domain.EnvVaultApproval) error {
+	return a.service.ApproveEnvVaultEntry(a.appContext(), approval)
+}
+
+func (a *App) MarkEnvVaultEntryStatus(entryID int64, status string) error {
+	return a.service.MarkEnvVaultEntryStatus(a.appContext(), entryID, status)
+}
+
+func (a *App) SuppressEnvVaultPrompt(suppression domain.EnvVaultPromptSuppression) error {
+	return a.service.SuppressEnvVaultPrompt(a.appContext(), suppression)
+}
+
 func (a *App) SaveEnvFile(localPath, content string) (domain.ExecuteResponse, error) {
 	return a.service.SaveRawEnv(a.appContext(), localPath, content)
 }

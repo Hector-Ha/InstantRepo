@@ -6,6 +6,10 @@ export function AnalyzeRepository(arg1, arg2) {
   return window['go']['main']['App']['AnalyzeRepository'](arg1, arg2);
 }
 
+export function ApproveEnvVaultEntry(arg1) {
+  return window['go']['main']['App']['ApproveEnvVaultEntry'](arg1);
+}
+
 export function ClonePreflight(arg1, arg2) {
   return window['go']['main']['App']['ClonePreflight'](arg1, arg2);
 }
@@ -34,6 +38,10 @@ export function ListInstalledRepos() {
   return window['go']['main']['App']['ListInstalledRepos']();
 }
 
+export function MarkEnvVaultEntryStatus(arg1, arg2) {
+  return window['go']['main']['App']['MarkEnvVaultEntryStatus'](arg1, arg2);
+}
+
 export function OpenDirectory() {
   return window['go']['main']['App']['OpenDirectory']();
 }
@@ -46,6 +54,14 @@ export function SaveEnvFile(arg1, arg2) {
   return window['go']['main']['App']['SaveEnvFile'](arg1, arg2);
 }
 
+export function SaveEnvVaultCredential(arg1) {
+  return window['go']['main']['App']['SaveEnvVaultCredential'](arg1);
+}
+
 export function ShellInfo() {
   return window['go']['main']['App']['ShellInfo']();
+}
+
+export function SuppressEnvVaultPrompt(arg1) {
+  return window['go']['main']['App']['SuppressEnvVaultPrompt'](arg1);
 }
