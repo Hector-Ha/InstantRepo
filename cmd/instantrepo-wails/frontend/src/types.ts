@@ -63,8 +63,13 @@ export interface EnvValueProvenance {
 }
 
 export interface EnvVaultBinding {
+  entryId?: number;
+  provider?: string;
+  variableName?: string;
   fingerprint: string;
+  displayName?: string;
   label?: string;
+  status?: string;
 }
 
 export interface EnvDraftValue {

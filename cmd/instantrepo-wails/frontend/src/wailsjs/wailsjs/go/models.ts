@@ -53,11 +53,11 @@ export namespace domain {
 	    requiredVersion: string;
 	    installedVersion?: string;
 	    status: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RequirementGap(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tool = source["tool"];
@@ -77,7 +77,7 @@ export namespace domain {
 	    steps: ExecutionStep[];
 	    safety: SafetyReport;
 	    unknowns: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SetupPlan(source);
 	    }
@@ -618,6 +618,28 @@ export namespace domain {
 		}
 	}
 	
+	export class EnvVaultBinding {
+	    entryId: number;
+	    provider: string;
+	    variableName: string;
+	    displayName?: string;
+	    fingerprint: string;
+	    status: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EnvVaultBinding(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entryId = source["entryId"];
+	        this.provider = source["provider"];
+	        this.variableName = source["variableName"];
+	        this.displayName = source["displayName"];
+	        this.fingerprint = source["fingerprint"];
+	        this.status = source["status"];
+	    }
+	}
 	export class EnvValueProvenance {
 	    source: string;
 	
@@ -639,6 +661,7 @@ export namespace domain {
 	    instructions?: string[];
 	    attention?: string[];
 	    provenance: EnvValueProvenance;
+	    vaultBinding?: EnvVaultBinding;
 	
 	    static createFrom(source: any = {}) {
 	        return new EnvDraftValue(source);
@@ -654,6 +677,7 @@ export namespace domain {
 	        this.instructions = source["instructions"];
 	        this.attention = source["attention"];
 	        this.provenance = this.convertValues(source["provenance"], EnvValueProvenance);
+	        this.vaultBinding = this.convertValues(source["vaultBinding"], EnvVaultBinding);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -748,6 +772,7 @@ export namespace domain {
 	
 	
 	
+
 	export class ExecutionResult {
 	    stepId: string;
 	    command: string;
@@ -1449,4 +1474,3 @@ export namespace domain {
 	
 
 }
-

@@ -209,6 +209,7 @@ func applyEditedEnvDraftValues(targets []domain.EnvDraftTarget, edited []domain.
 				continue
 			}
 			targets[targetIndex].Values[valueIndex].Value = editedValue.Value
+			targets[targetIndex].Values[valueIndex].VaultBinding = editedValue.VaultBinding
 			if editedValue.Provenance.Source != "" {
 				targets[targetIndex].Values[valueIndex].Provenance = editedValue.Provenance
 			}

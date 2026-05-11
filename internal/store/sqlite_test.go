@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestSQLiteStoreInitializesFoundationTables(t *testing.T) {
 SELECT name
 FROM sqlite_master
 WHERE type = 'table'
-	AND name IN ('schema_migrations', 'installed_repos', 'setup_sessions', 'step_runs', 'app_settings')
+	AND name IN ('schema_migrations', 'installed_repos', 'setup_sessions', 'step_runs', 'app_settings', 'env_vault_entries', 'env_vault_approvals', 'env_vault_use_records')
 ORDER BY name;
 `)
 	if err != nil {
@@ -93,7 +94,7 @@ ORDER BY name;
 	}
 
 	sort.Strings(names)
-	want := []string{"app_settings", "installed_repos", "schema_migrations", "setup_sessions", "step_runs"}
+	want := []string{"app_settings", "env_vault_approvals", "env_vault_entries", "env_vault_use_records", "installed_repos", "schema_migrations", "setup_sessions", "step_runs"}
 	for i := range want {
 		if i >= len(names) || names[i] != want[i] {
 			t.Fatalf("expected foundation tables %v, got %v", want, names)
@@ -103,6 +104,111 @@ ORDER BY name;
 	var version int
 	if err := store.db.QueryRow(`SELECT version FROM schema_migrations WHERE version = 1;`).Scan(&version); err != nil {
 		t.Fatalf("expected schema migration version 1: %v", err)
+	}
+}
+
+func TestSQLiteStoreMigratesFromVersion2DatabaseWithoutDataLoss(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "instantrepo.db")
+	seedVersion2Database(t, dbPath)
+
+	store, err := OpenSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	defer store.Close()
+
+	versions := schemaMigrationVersions(t, store)
+	for _, want := range []int{1, 2, 3} {
+		if _, ok := versions[want]; !ok {
+			t.Fatalf("expected schema_migrations to record version %d, got %v", want, versions)
+		}
+	}
+
+	for _, table := range []string{"env_vault_entries", "env_vault_approvals", "env_vault_use_records"} {
+		if !tableExists(t, store, table) {
+			t.Fatalf("expected vault table %q after migration", table)
+		}
+	}
+
+	repo, err := store.InstalledRepoByLocalPath(context.Background(), "C:\\seed-repo")
+	if err != nil {
+		t.Fatalf("InstalledRepoByLocalPath returned error: %v", err)
+	}
+	if repo.RawURL != "https://github.com/example/seed.git" || repo.NormalizedURL != "https://github.com/example/seed" {
+		t.Fatalf("expected seeded installed repo to survive migration, got %+v", repo)
+	}
+
+	entry, err := store.SaveEnvVaultEntry(context.Background(), domain.EnvVaultEntryMetadata{
+		EnvVaultEntry: domain.EnvVaultEntry{
+			Provider:            "openai",
+			VariableName:        "OPENAI_API_KEY",
+			DisplayName:         "post-migration",
+			FingerprintFragment: "abcdef123456",
+			Status:              domain.EnvVaultStatusReady,
+		},
+		Fingerprint: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+	})
+	if err != nil {
+		t.Fatalf("SaveEnvVaultEntry on migrated DB returned error: %v", err)
+	}
+	if entry.ID == 0 {
+		t.Fatalf("expected new vault entry to insert on migrated DB")
+	}
+}
+
+func TestSQLiteStorePersistsEnvVaultMetadataAndUseRecordsWithoutValues(t *testing.T) {
+	store := openTestSQLiteStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	entry, err := store.SaveEnvVaultEntry(ctx, domain.EnvVaultEntryMetadata{
+		EnvVaultEntry: domain.EnvVaultEntry{
+			Provider:            "openai",
+			VariableName:        "OPENAI_API_KEY",
+			DisplayName:         "work",
+			FingerprintFragment: "abcdef123456",
+			Status:              domain.EnvVaultStatusReady,
+		},
+		CredentialKey: "instantrepo-env-vault-entry-temp",
+		Fingerprint:   "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+	})
+	if err != nil {
+		t.Fatalf("SaveEnvVaultEntry returned error: %v", err)
+	}
+	if err := store.UpdateEnvVaultEntryCredentialKey(ctx, entry.ID, "instantrepo-env-vault-entry-1"); err != nil {
+		t.Fatalf("UpdateEnvVaultEntryCredentialKey returned error: %v", err)
+	}
+	if err := store.SaveEnvVaultApproval(ctx, domain.EnvVaultApproval{
+		EntryID:            entry.ID,
+		RepoPath:           "C:\\repo",
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+		Status:             "approved",
+	}); err != nil {
+		t.Fatalf("SaveEnvVaultApproval returned error: %v", err)
+	}
+	if err := store.RecordEnvVaultUse(ctx, domain.EnvVaultUseRecord{
+		EntryID:            entry.ID,
+		RepoPath:           "C:\\repo",
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("RecordEnvVaultUse returned error: %v", err)
+	}
+
+	entries, err := store.ApprovedEnvVaultEntries(ctx, "C:\\repo", ".env", "OPENAI_API_KEY")
+	if err != nil {
+		t.Fatalf("ApprovedEnvVaultEntries returned error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != entry.ID || entries[0].CredentialKey != "instantrepo-env-vault-entry-1" {
+		t.Fatalf("expected approved entry with credential key ref, got %+v", entries)
+	}
+	records, err := store.EnvVaultUseRecords(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("EnvVaultUseRecords returned error: %v", err)
+	}
+	if len(records) != 1 || records[0].UseCount != 1 {
+		t.Fatalf("expected one use record, got %+v", records)
 	}
 }
 
@@ -514,4 +620,112 @@ func stepRunCountForSession(t *testing.T, store *SQLiteStore, sessionID int64) i
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func seedVersion2Database(t *testing.T, dbPath string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatalf("create db dir: %v", err)
+	}
+	db, err := openRawSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range []string{
+		`CREATE TABLE schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE installed_repos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			raw_url TEXT,
+			normalized_url TEXT,
+			local_path TEXT NOT NULL UNIQUE,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			last_analyzed_at TEXT NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX installed_repos_normalized_url_unique
+			ON installed_repos(normalized_url)
+			WHERE normalized_url IS NOT NULL AND normalized_url != '';`,
+		`CREATE TABLE setup_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			installed_repo_id INTEGER,
+			repo_path TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(installed_repo_id) REFERENCES installed_repos(id) ON DELETE SET NULL
+		);`,
+		`CREATE TABLE step_runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			setup_session_id INTEGER NOT NULL,
+			step_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			command TEXT NOT NULL,
+			command_hash TEXT NOT NULL DEFAULT '',
+			command_preview TEXT NOT NULL DEFAULT '',
+			cwd TEXT NOT NULL,
+			status TEXT NOT NULL,
+			exit_code INTEGER,
+			log_path TEXT,
+			duration TEXT NOT NULL DEFAULT '',
+			started_at TEXT,
+			finished_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(setup_session_id) REFERENCES setup_sessions(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-05-01T00:00:00.000000000Z');`,
+		`INSERT INTO schema_migrations(version, applied_at) VALUES (2, '2026-05-02T00:00:00.000000000Z');`,
+		`INSERT INTO installed_repos(raw_url, normalized_url, local_path, status, created_at, updated_at, last_analyzed_at)
+			VALUES ('https://github.com/example/seed.git', 'https://github.com/example/seed', 'C:\seed-repo', 'analyzed',
+				'2026-05-03T00:00:00.000000000Z', '2026-05-03T00:00:00.000000000Z', '2026-05-03T00:00:00.000000000Z');`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed v2 statement failed: %v\nstmt: %s", err, stmt)
+		}
+	}
+}
+
+func openRawSQLite(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", path)
+}
+
+func schemaMigrationVersions(t *testing.T, store *SQLiteStore) map[int]bool {
+	t.Helper()
+	rows, err := store.db.Query(`SELECT version FROM schema_migrations;`)
+	if err != nil {
+		t.Fatalf("query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+	out := map[int]bool{}
+	for rows.Next() {
+		var version int
+		if err := rows.Scan(&version); err != nil {
+			t.Fatalf("scan schema_migrations: %v", err)
+		}
+		out[version] = true
+	}
+	return out
+}
+
+func tableExists(t *testing.T, store *SQLiteStore, name string) bool {
+	t.Helper()
+	var got string
+	err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?;`, name).Scan(&got)
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("query table existence: %v", err)
+	}
+	return got == name
 }

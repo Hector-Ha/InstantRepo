@@ -403,6 +403,7 @@ const (
 	EnvValueSourceCatalog         = "catalog"
 	EnvValueSourceAllocator       = "allocator"
 	EnvValueSourceGeneratedSecret = "generated_secret"
+	EnvValueSourceVault           = "vault"
 )
 
 const (
@@ -433,6 +434,7 @@ type EnvDraftValue struct {
 	Instructions []string           `json:"instructions,omitempty"`
 	Attention    []string           `json:"attention,omitempty"`
 	Provenance   EnvValueProvenance `json:"provenance"`
+	VaultBinding *EnvVaultBinding   `json:"vaultBinding,omitempty"`
 }
 
 type EnvValueProvenance struct {
@@ -447,6 +449,75 @@ type EnvSaveTargetResult struct {
 	RelativePath string `json:"relativePath"`
 	Succeeded    bool   `json:"succeeded"`
 	ErrorKind    string `json:"errorKind,omitempty"`
+}
+
+const (
+	EnvVaultStatusReady        = "ready"
+	EnvVaultStatusNeedsReview  = "needs_review"
+	EnvVaultStatusActionNeeded = "action_needed"
+	EnvVaultStatusInvalid      = "invalid"
+)
+
+const EnvVaultDuplicateReviewMessage = "This credential may already exist or may need review."
+
+type EnvVaultSaveRequest struct {
+	Provider     string `json:"provider"`
+	VariableName string `json:"variableName"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Value        string `json:"value"`
+}
+
+type EnvVaultSaveResponse struct {
+	Entry         EnvVaultEntry `json:"entry,omitempty"`
+	NeedsReview   bool          `json:"needsReview"`
+	ReviewMessage string        `json:"reviewMessage,omitempty"`
+}
+
+type EnvVaultEntry struct {
+	ID                  int64     `json:"id"`
+	Provider            string    `json:"provider"`
+	VariableName        string    `json:"variableName"`
+	DisplayName         string    `json:"displayName"`
+	FingerprintFragment string    `json:"fingerprintFragment"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+type EnvVaultEntryMetadata struct {
+	EnvVaultEntry
+	CredentialKey string `json:"-"`
+	Fingerprint   string `json:"-"`
+}
+
+type EnvVaultApproval struct {
+	ID                 int64     `json:"id"`
+	EntryID            int64     `json:"entryId"`
+	RepoPath           string    `json:"repoPath"`
+	TargetRelativePath string    `json:"targetRelativePath"`
+	VariableName       string    `json:"variableName"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+type EnvVaultUseRecord struct {
+	ID                 int64     `json:"id"`
+	EntryID            int64     `json:"entryId"`
+	RepoPath           string    `json:"repoPath"`
+	TargetRelativePath string    `json:"targetRelativePath"`
+	VariableName       string    `json:"variableName"`
+	UsedAt             time.Time `json:"usedAt"`
+	UseCount           int       `json:"useCount"`
+}
+
+type EnvVaultBinding struct {
+	EntryID             int64  `json:"entryId"`
+	Provider            string `json:"provider"`
+	VariableName        string `json:"variableName"`
+	DisplayName         string `json:"displayName,omitempty"`
+	FingerprintFragment string `json:"fingerprint"`
+	Status              string `json:"status"`
 }
 
 type ServiceDependency struct {

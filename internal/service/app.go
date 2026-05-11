@@ -21,6 +21,7 @@ type AppService struct {
 	planner        *Planner
 	executor       *Executor
 	envDrafts      *EnvDraftManager
+	vault          *EnvVaultService
 	installedRepos InstalledRepoStore
 	setupRecorder  *setupSessionRecorder
 	disk           DiskChecker
@@ -54,7 +55,7 @@ func NewAppService() *AppService {
 }
 
 func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *AppService {
-	return &AppService{
+	app := &AppService{
 		fetcher:        NewRepoFetcher(),
 		analyzer:       analyzer.NewRepositoryAnalyzer(),
 		detector:       detector.NewEnvironmentDetector(),
@@ -65,6 +66,10 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 		setupRecorder:  newSetupSessionRecorder(installedRepos),
 		disk:           osDiskChecker{},
 	}
+	if vaultStore, ok := installedRepos.(EnvVaultStore); ok {
+		app.vault = NewEnvVaultService(vaultStore, NewOSCredentialStore())
+	}
+	return app
 }
 
 func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
@@ -292,7 +297,16 @@ func (s *AppService) GenerateEnvDraft(ctx context.Context, localPath string) (do
 	if err != nil {
 		return domain.EnvDraft{}, err
 	}
-	return s.envDrafts.BuildDraft(analyzeResp.Analysis)
+	draft, err := s.envDrafts.BuildDraft(analyzeResp.Analysis)
+	if err != nil {
+		return domain.EnvDraft{}, err
+	}
+	if s.vault != nil {
+		if err := s.vault.ApplyApprovedBindings(ctx, &draft); err != nil {
+			return domain.EnvDraft{}, err
+		}
+	}
+	return draft, nil
 }
 
 func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath string, edited domain.EnvDraft) (domain.ExecuteResponse, error) {
@@ -306,6 +320,9 @@ func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath strin
 	draft, err := s.envDrafts.BuildDraft(analyzeResp.Analysis)
 	if err == nil {
 		applyEditedEnvDraftValues(draft.Targets, edited.Targets)
+		if s.vault != nil {
+			err = s.vault.ResolveBindings(ctx, &draft)
+		}
 	}
 	var result domain.ExecutionResult
 	if err == nil {
