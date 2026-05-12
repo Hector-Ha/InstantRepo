@@ -19,7 +19,8 @@ It have three faces:
 - Detect local tools like `git`, `node`, `bun`, `npm`, `pnpm`, `python`, `go`, and `docker`.
 - Read `README.md` for install, run, env, and service hints.
 - Detect `.env` templates and needed secret values.
-- Draft or update `.env` with safe defaults, while keeping existing values.
+- Draft or update grouped local `.env` targets with safe defaults, while keeping existing values.
+- Store approved service credentials through the operating system credential store for reuse in Env Drafts.
 - Detect Docker Compose services like Postgres, MongoDB, Redis, and MySQL.
 - Flag scripts, installers, and binaries before run.
 - Classify setup steps as `required`, `recommended`, `optional`, `manual`, or `uncertain`.
@@ -27,13 +28,21 @@ It have three faces:
 
 ## Env Draft Direction
 
-`.env` setup is core product work. Current app can draft or update env files with safe defaults, while keeping existing values. Next track expands this into catalog-driven Env Drafts:
+`.env` setup is core product work. Current app can draft or update grouped local env files with safe defaults, topology-aware local URLs and ports, generated local secrets, and vault-backed service credential references while keeping existing values.
+
+Current Env Draft foundation includes:
 
 - App Topology first: detect frontend, backend, workers, databases, caches, and providers before guessing URLs or ports.
 - Env Default Catalog: classify dev defaults, generated local secrets, service credentials, and provider config through app-shipped rules.
-- User Env Vault: store approved service credentials in OS credential store, never in repo metadata.
 - Multi-target Save All: handle root, client, server, and weird local `.env*` files in one view.
-- AI Env Review: when enabled, review low-confidence non-secret defaults through bounded context, not raw secrets or full repo files.
+- User Env Vault backend: store approved service credentials in the OS credential store and keep only metadata, approvals, fingerprints, and use records in the Local App Database.
+- Deepened Env Draft internals: target inference and save policy now live behind smaller behavior-tested modules.
+
+Remaining roadmap:
+
+- Env Vault Manager: dedicated UI for saved credentials, approvals, usage, reveal, action-needed state, and removal.
+- Env Pattern Contribution: opt-in value-free env-name/context reports for future catalog patches.
+- AI Env Review: bounded review of low-confidence non-secret defaults through validated Env Patches, not raw secrets or full repo files.
 
 See `CONTEXT.md` and `docs/adr/0002-use-catalog-driven-env-drafts.md` for the product rules.
 
@@ -45,9 +54,10 @@ cmd/instantrepo-wails       Wails desktop app backend
 cmd/instantrepo-wails/frontend
                             React + Vite UI, built with Bun
 internal/analyzer           Repo, README, runtime, env, and service detection
-internal/service            Planning, execution, env writing, repo clone flow
+internal/service            Planning, execution, env writing, Env Vault, repo clone flow
 internal/api                HTTP endpoints
 internal/domain             Shared response and plan types
+internal/store              SQLite local metadata, setup sessions, Env Vault metadata
 test                        Manual MVP test plan and repo matrix
 ```
 
@@ -152,6 +162,13 @@ cd cmd/instantrepo-wails/frontend
 bun run build
 ```
 
+Run frontend behavior tests:
+
+```bash
+cd cmd/instantrepo-wails/frontend
+bun test
+```
+
 Manual MVP test plan live in `test/TEST_PLAN.md`. Repo tracking sheet live in `test/repo-matrix.csv`.
 
 ## Trust Model
@@ -170,16 +187,22 @@ README commands can help, but do not beat manifest-backed commands.
 
 Env Draft foundation is tracked in GitHub Issues:
 
-1. [#15 PRD: Catalog-driven Env Drafts and Vault-backed Credentials](https://github.com/Hector-Ha/InstantRepo/issues/15)
-2. [#16 Env Draft model + safe Save All](https://github.com/Hector-Ha/InstantRepo/issues/16)
-3. [#17 Env target inference](https://github.com/Hector-Ha/InstantRepo/issues/17)
-4. [#18 Env Default Catalog](https://github.com/Hector-Ha/InstantRepo/issues/18)
-5. [#19 App Topology + allocator](https://github.com/Hector-Ha/InstantRepo/issues/19)
-6. [#20 Structured Env UI](https://github.com/Hector-Ha/InstantRepo/issues/20)
-7. [#21 User Env Vault backend](https://github.com/Hector-Ha/InstantRepo/issues/21)
-8. [#22 Env Vault Manager](https://github.com/Hector-Ha/InstantRepo/issues/22)
-9. [#23 Env Pattern Contribution](https://github.com/Hector-Ha/InstantRepo/issues/23)
-10. [#24 AI Env Review + Env Patch](https://github.com/Hector-Ha/InstantRepo/issues/24)
+1. [#15 PRD: Catalog-driven Env Drafts and Vault-backed Credentials](https://github.com/Hector-Ha/InstantRepo/issues/15) is the parent track.
+2. [#16 Env Draft model + safe Save All](https://github.com/Hector-Ha/InstantRepo/issues/16) is done.
+3. [#17 Env target inference](https://github.com/Hector-Ha/InstantRepo/issues/17) is done.
+4. [#18 Env Default Catalog](https://github.com/Hector-Ha/InstantRepo/issues/18) is done.
+5. [#19 App Topology + allocator](https://github.com/Hector-Ha/InstantRepo/issues/19) is done.
+6. [#20 Structured Env UI](https://github.com/Hector-Ha/InstantRepo/issues/20) is done.
+7. [#21 User Env Vault backend](https://github.com/Hector-Ha/InstantRepo/issues/21) has backend foundation in master and should be verified before moving to UI work.
+8. [#22 Env Vault Manager](https://github.com/Hector-Ha/InstantRepo/issues/22) is next UI work after #21 is accepted.
+9. [#23 Env Pattern Contribution](https://github.com/Hector-Ha/InstantRepo/issues/23) follows the vault manager unless maintainer reprioritizes telemetry earlier.
+10. [#24 AI Env Review + Env Patch](https://github.com/Hector-Ha/InstantRepo/issues/24) should follow deterministic and vault foundations.
+
+Architecture cleanup also landed after #20:
+
+- [#25 Deepen setup architecture after Env Draft foundation](https://github.com/Hector-Ha/InstantRepo/issues/25)
+- [#26 Deepen setup safety scan with ignored generated folders](https://github.com/Hector-Ha/InstantRepo/issues/26)
+- [#27 Deepen Env Draft foundation interfaces](https://github.com/Hector-Ha/InstantRepo/issues/27)
 
 ## Next Work
 

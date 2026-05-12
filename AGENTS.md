@@ -10,6 +10,7 @@ InstantRepo be Go + Wails app. It helps user set up local repos.
 - CLI/API entry: `cmd/instantrepo`.
 - Desktop app: Wails in `cmd/instantrepo-wails`.
 - Frontend: React + Vite + TypeScript in `cmd/instantrepo-wails/frontend`.
+- Local metadata store: SQLite in `internal/store`.
 - Tests: Go tests beside code, plus manual plan in `test/TEST_PLAN.md`.
 
 ## Agent skills
@@ -45,17 +46,34 @@ Parent PRD:
 
 Implementation order:
 
-1. `#16` Build structured Env Draft model with provenance and safe Save All.
-2. `#17` Infer local env targets from env files and code usage.
-3. `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults.
-4. `#19` Detect App Topology and allocate coherent local dev values.
-5. `#20` Ship structured Env Draft UI with grouped targets and raw vault tags.
-6. `#21` Add User Env Vault backend with OS credential storage and approvals.
+1. `#16` Build structured Env Draft model with provenance and safe Save All. Done.
+2. `#17` Infer local env targets from env files and code usage. Done.
+3. `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults. Done.
+4. `#19` Detect App Topology and allocate coherent local dev values. Done.
+5. `#20` Ship structured Env Draft UI with grouped targets and raw vault tags. Done.
+6. `#21` Add User Env Vault backend with OS credential storage and approvals. Backend is in master; verify issue and close or finish gaps before #22.
 7. `#22` Build Env Vault Manager for credentials, usage, and action-needed states.
 8. `#23` Add Env Pattern Contribution settings, public filtering, and offline queue.
 9. `#24` Add AI Env Review Bundle and Env Patch validation.
 
-Do not skip dependencies unless maintainer says so. Each issue is meant as vertical slice, but issue `#20`, `#22`, `#23`, and `#24` depend on earlier domain/backend foundation.
+Do not skip dependencies unless maintainer says so. Each issue is meant as vertical slice, but issue `#22`, `#23`, and `#24` depend on earlier domain/backend foundation.
+
+Architecture cleanup:
+
+- `#25` PRD: Deepen setup architecture after Env Draft foundation. Closed.
+- `#26` Deepen setup safety scan with ignored generated folders. Closed.
+- `#27` Deepen Env Draft foundation interfaces for target inference and save policy. Closed.
+
+These cleanup issues support #21-#24. They do not replace the Env Draft roadmap.
+
+Current important Env modules:
+
+- `internal/analyzer/env_target_inference.go` owns Env Target Inference orchestration.
+- `internal/service/envdraft_save.go` owns Env Draft save policy.
+- `internal/service/envvault.go` owns User Env Vault backend behavior.
+- `internal/service/credential_store_windows.go` owns Windows credential-store access.
+- `internal/store/sqlite.go` stores Local App Database metadata, never raw vault values.
+- `cmd/instantrepo-wails/frontend/src/EnvDraftPanel.tsx` owns current structured Env Draft UI.
 
 ## Package Manager
 
@@ -135,6 +153,14 @@ go test ./internal/service -run TestName
 ```
 
 Before done, run `go test ./...` when Go code changed. Run `bun run build` when frontend code changed.
+Frontend tests use Bun test directly:
+
+```bash
+cd cmd/instantrepo-wails/frontend
+bun test
+```
+
+Run `wails build -clean` when Wails bindings or exposed app methods change.
 
 ## Code Style
 
@@ -168,6 +194,9 @@ This app inspects and can run code from unknown repos. Be careful.
 - Preserve existing `.env` values. Never print secrets.
 - Do not write real secret values into docs or tests.
 - Do not store service credential values in SQLite, logs, issues, PRs, diagnostics, or docs.
+- User Env Vault stores raw values only in the OS credential store. If it is unavailable, fail closed; do not add plaintext fallback.
+- SQLite may store Env Vault metadata, fingerprints, approvals, prompt suppressions, and use records only.
+- Vault-backed Env Draft values must stay masked in draft JSON and frontend state; resolve values only at save time.
 - Env Default Catalog rules are data-only. Do not add rule behavior that runs commands or bypasses approval gates.
 - AI Env Review must use bounded context and structured Env Patch; never send raw secrets, vault values, full `.env` files, or full source files by default.
 - Source Fix Suggestions for env loader paths are informational in foundation; do not auto-edit source for that flow.
