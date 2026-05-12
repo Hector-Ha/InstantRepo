@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,10 +16,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 const maxSetupSessionsPerRepo = 10
+const maxEnvContributionQueueItems = 100
 
 const setupLogRetention = 7 * 24 * time.Hour
+const envContributionQueueRetention = 30 * 24 * time.Hour
+const envContributionSettingsKey = "env_pattern_contribution_settings"
 
 type SQLiteStore struct {
 	db     *sql.DB
@@ -446,6 +450,158 @@ func (s *SQLiteStore) CleanupSetupSessionRetention(ctx context.Context, now time
 	}
 	if err := s.deleteSetupSessions(ctx, deleteIDs); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettings, error) {
+	settings := defaultEnvContributionSettings()
+	var raw string
+	err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM app_settings
+WHERE key = ?;
+`, envContributionSettingsKey).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return settings, nil
+	}
+	if err != nil {
+		return domain.EnvContributionSettings{}, fmt.Errorf("query env contribution settings: %w", err)
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return domain.EnvContributionSettings{}, fmt.Errorf("parse env contribution settings: %w", err)
+	}
+	return settings, nil
+}
+
+func (s *SQLiteStore) SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) error {
+	settings.UpdatedAt = time.Now().UTC()
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("encode env contribution settings: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO app_settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key)
+DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+`, envContributionSettingsKey, string(raw), formatTime(settings.UpdatedAt))
+	if err != nil {
+		return fmt.Errorf("save env contribution settings: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveEnvContributionQueueItem(ctx context.Context, item domain.EnvContributionQueueItem) (domain.EnvContributionQueueItem, error) {
+	if strings.TrimSpace(item.EventType) == "" || strings.TrimSpace(item.PayloadJSON) == "" {
+		return domain.EnvContributionQueueItem{}, fmt.Errorf("contribution event type and payload are required")
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now().UTC()
+	}
+	row := s.db.QueryRowContext(ctx, `
+INSERT INTO env_pattern_contribution_queue (
+	event_type,
+	payload_json,
+	created_at,
+	attempts,
+	last_attempt_at
+) VALUES (?, ?, ?, ?, ?)
+RETURNING id, event_type, payload_json, created_at, attempts, last_attempt_at;
+`,
+		item.EventType,
+		item.PayloadJSON,
+		formatTime(item.CreatedAt),
+		item.Attempts,
+		nullString(formatOptionalTime(item.LastAttemptAt)),
+	)
+	saved, err := scanEnvContributionQueueItem(row)
+	if err != nil {
+		return domain.EnvContributionQueueItem{}, fmt.Errorf("insert env contribution queue item: %w", err)
+	}
+	if err := s.PruneEnvContributionQueue(ctx, item.CreatedAt); err != nil {
+		return domain.EnvContributionQueueItem{}, err
+	}
+	return saved, nil
+}
+
+func (s *SQLiteStore) EnvContributionQueueItems(ctx context.Context, limit int) ([]domain.EnvContributionQueueItem, error) {
+	if limit <= 0 {
+		limit = maxEnvContributionQueueItems
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, event_type, payload_json, created_at, attempts, last_attempt_at
+FROM env_pattern_contribution_queue
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query env contribution queue: %w", err)
+	}
+	defer rows.Close()
+
+	var items []domain.EnvContributionQueueItem
+	for rows.Next() {
+		item, err := scanEnvContributionQueueItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan env contribution queue item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read env contribution queue: %w", err)
+	}
+	return items, nil
+}
+
+func (s *SQLiteStore) EnvContributionQueueStatus(ctx context.Context) (domain.EnvContributionQueueStatus, error) {
+	var status domain.EnvContributionQueueStatus
+	var oldest sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(*), MIN(created_at)
+FROM env_pattern_contribution_queue;
+`).Scan(&status.Count, &oldest)
+	if err != nil {
+		return domain.EnvContributionQueueStatus{}, fmt.Errorf("query env contribution queue status: %w", err)
+	}
+	if oldest.Valid && oldest.String != "" {
+		parsed, err := parseTime(oldest.String)
+		if err != nil {
+			return domain.EnvContributionQueueStatus{}, fmt.Errorf("parse env contribution queue oldest: %w", err)
+		}
+		status.OldestCreatedAt = parsed
+	}
+	return status, nil
+}
+
+func (s *SQLiteStore) ClearEnvContributionQueue(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM env_pattern_contribution_queue;`); err != nil {
+		return fmt.Errorf("clear env contribution queue: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) PruneEnvContributionQueue(ctx context.Context, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	cutoff := now.UTC().Add(-envContributionQueueRetention)
+	if _, err := s.db.ExecContext(ctx, `
+DELETE FROM env_pattern_contribution_queue
+WHERE created_at < ?;
+`, formatTime(cutoff)); err != nil {
+		return fmt.Errorf("prune old env contribution queue items: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+DELETE FROM env_pattern_contribution_queue
+WHERE id NOT IN (
+	SELECT id
+	FROM env_pattern_contribution_queue
+	ORDER BY created_at DESC, id DESC
+	LIMIT ?
+);
+`, maxEnvContributionQueueItems); err != nil {
+		return fmt.Errorf("prune excess env contribution queue items: %w", err)
 	}
 	return nil
 }
@@ -1029,6 +1185,16 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS env_vault_prompt_suppressions_unique
 			ON env_vault_prompt_suppressions(repo_path, target_relative_path, variable_name);`,
+		`CREATE TABLE IF NOT EXISTS env_pattern_contribution_queue (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_attempt_at TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS env_pattern_contribution_queue_created_idx
+			ON env_pattern_contribution_queue(created_at);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
@@ -1053,6 +1219,9 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`); err != nil {
 		return fmt.Errorf("record migration 3: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`); err != nil {
+		return fmt.Errorf("record migration 4: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1082,6 +1251,10 @@ type envVaultApprovalScanner interface {
 }
 
 type envVaultUseRecordScanner interface {
+	Scan(dest ...any) error
+}
+
+type envContributionQueueItemScanner interface {
 	Scan(dest ...any) error
 }
 
@@ -1128,6 +1301,21 @@ func scanInstalledRepo(row installedRepoScanner) (domain.InstalledRepo, error) {
 
 func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func formatOptionalTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return formatTime(value)
+}
+
+func defaultEnvContributionSettings() domain.EnvContributionSettings {
+	return domain.EnvContributionSettings{
+		PublicEnvPatternsEnabled:       true,
+		PrivateLocalEnvPatternsEnabled: false,
+		ConsentShown:                   false,
+	}
 }
 
 func formatTime(value time.Time) string {
@@ -1294,6 +1482,32 @@ func scanEnvVaultUseRecord(row envVaultUseRecordScanner) (domain.EnvVaultUseReco
 		return domain.EnvVaultUseRecord{}, fmt.Errorf("parse env vault use used_at: %w", err)
 	}
 	return record, nil
+}
+
+func scanEnvContributionQueueItem(row envContributionQueueItemScanner) (domain.EnvContributionQueueItem, error) {
+	var item domain.EnvContributionQueueItem
+	var createdAt string
+	var lastAttemptAt sql.NullString
+	if err := row.Scan(
+		&item.ID,
+		&item.EventType,
+		&item.PayloadJSON,
+		&createdAt,
+		&item.Attempts,
+		&lastAttemptAt,
+	); err != nil {
+		return domain.EnvContributionQueueItem{}, err
+	}
+	var err error
+	if item.CreatedAt, err = parseTime(createdAt); err != nil {
+		return domain.EnvContributionQueueItem{}, fmt.Errorf("parse env contribution queue created_at: %w", err)
+	}
+	if lastAttemptAt.Valid && lastAttemptAt.String != "" {
+		if item.LastAttemptAt, err = parseTime(lastAttemptAt.String); err != nil {
+			return domain.EnvContributionQueueItem{}, fmt.Errorf("parse env contribution queue last_attempt_at: %w", err)
+		}
+	}
+	return item, nil
 }
 
 func ensureColumn(ctx context.Context, tx *sql.Tx, tableName, columnName, definition string) error {

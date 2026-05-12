@@ -22,6 +22,24 @@ test("desktop API calls Wails bridge when it exists", async () => {
             value: "sk-test",
             revealUntil: "2026-01-01T00:00:00Z",
           }),
+          EnvContributionSettings: async () => ({
+            settings: {
+              publicEnvPatternsEnabled: true,
+              privateLocalEnvPatternsEnabled: false,
+              consentShown: false,
+              updatedAt: "",
+            },
+            queue: { count: 0 },
+          }),
+          ClearEnvContributionQueue: async () => ({
+            settings: {
+              publicEnvPatternsEnabled: true,
+              privateLocalEnvPatternsEnabled: false,
+              consentShown: true,
+              updatedAt: "",
+            },
+            queue: { count: 0 },
+          }),
         },
       },
     },
@@ -36,4 +54,10 @@ test("desktop API calls Wails bridge when it exists", async () => {
   await expect(
     api.RevealEnvVaultEntry({ entryId: 1, confirmed: true }),
   ).resolves.toMatchObject({ entryId: 1, value: "sk-test" });
+  await expect(api.EnvContributionSettings()).resolves.toMatchObject({
+    settings: { publicEnvPatternsEnabled: true },
+  });
+  await expect(api.ClearEnvContributionQueue()).resolves.toMatchObject({
+    queue: { count: 0 },
+  });
 });

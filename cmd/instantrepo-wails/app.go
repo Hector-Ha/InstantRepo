@@ -84,6 +84,22 @@ func (a *App) RemoveEnvVaultEntry(entryID int64) error {
 	return a.service.RemoveEnvVaultEntry(a.appContext(), entryID)
 }
 
+func (a *App) EnvContributionSettings() (domain.EnvContributionSettingsResponse, error) {
+	return a.service.EnvContributionSettings(a.appContext())
+}
+
+func (a *App) SaveEnvContributionSettings(settings domain.EnvContributionSettings) (domain.EnvContributionSettingsResponse, error) {
+	return a.service.SaveEnvContributionSettings(a.appContext(), settings)
+}
+
+func (a *App) RecordEnvContributionConsent(publicEnabled bool) (domain.EnvContributionSettingsResponse, error) {
+	return a.service.RecordEnvContributionConsent(a.appContext(), publicEnabled)
+}
+
+func (a *App) ClearEnvContributionQueue() (domain.EnvContributionSettingsResponse, error) {
+	return a.service.ClearEnvContributionQueue(a.appContext())
+}
+
 func (a *App) ApproveEnvVaultEntry(approval domain.EnvVaultApproval) error {
 	return a.service.ApproveEnvVaultEntry(a.appContext(), approval)
 }

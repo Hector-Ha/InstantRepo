@@ -73,7 +73,7 @@ func TestSQLiteStoreInitializesFoundationTables(t *testing.T) {
 SELECT name
 FROM sqlite_master
 WHERE type = 'table'
-	AND name IN ('schema_migrations', 'installed_repos', 'setup_sessions', 'step_runs', 'app_settings', 'env_vault_entries', 'env_vault_approvals', 'env_vault_use_records')
+	AND name IN ('schema_migrations', 'installed_repos', 'setup_sessions', 'step_runs', 'app_settings', 'env_vault_entries', 'env_vault_approvals', 'env_vault_use_records', 'env_pattern_contribution_queue')
 ORDER BY name;
 `)
 	if err != nil {
@@ -94,7 +94,7 @@ ORDER BY name;
 	}
 
 	sort.Strings(names)
-	want := []string{"app_settings", "env_vault_approvals", "env_vault_entries", "env_vault_use_records", "installed_repos", "schema_migrations", "setup_sessions", "step_runs"}
+	want := []string{"app_settings", "env_pattern_contribution_queue", "env_vault_approvals", "env_vault_entries", "env_vault_use_records", "installed_repos", "schema_migrations", "setup_sessions", "step_runs"}
 	for i := range want {
 		if i >= len(names) || names[i] != want[i] {
 			t.Fatalf("expected foundation tables %v, got %v", want, names)
@@ -118,13 +118,13 @@ func TestSQLiteStoreMigratesFromVersion2DatabaseWithoutDataLoss(t *testing.T) {
 	defer store.Close()
 
 	versions := schemaMigrationVersions(t, store)
-	for _, want := range []int{1, 2, 3} {
+	for _, want := range []int{1, 2, 3, 4} {
 		if _, ok := versions[want]; !ok {
 			t.Fatalf("expected schema_migrations to record version %d, got %v", want, versions)
 		}
 	}
 
-	for _, table := range []string{"env_vault_entries", "env_vault_approvals", "env_vault_use_records"} {
+	for _, table := range []string{"env_vault_entries", "env_vault_approvals", "env_vault_use_records", "env_pattern_contribution_queue"} {
 		if !tableExists(t, store, table) {
 			t.Fatalf("expected vault table %q after migration", table)
 		}
@@ -209,6 +209,92 @@ func TestSQLiteStorePersistsEnvVaultMetadataAndUseRecordsWithoutValues(t *testin
 	}
 	if len(records) != 1 || records[0].UseCount != 1 {
 		t.Fatalf("expected one use record, got %+v", records)
+	}
+}
+
+func TestSQLiteStorePersistsEnvContributionSettings(t *testing.T) {
+	store := openTestSQLiteStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	defaults, err := store.EnvContributionSettings(ctx)
+	if err != nil {
+		t.Fatalf("EnvContributionSettings returned error: %v", err)
+	}
+	if !defaults.PublicEnvPatternsEnabled || defaults.PrivateLocalEnvPatternsEnabled || defaults.ConsentShown {
+		t.Fatalf("expected default public-on private-off consent-unshown settings, got %+v", defaults)
+	}
+
+	defaults.PublicEnvPatternsEnabled = false
+	defaults.PrivateLocalEnvPatternsEnabled = true
+	defaults.ConsentShown = true
+	if err := store.SaveEnvContributionSettings(ctx, defaults); err != nil {
+		t.Fatalf("SaveEnvContributionSettings returned error: %v", err)
+	}
+	got, err := store.EnvContributionSettings(ctx)
+	if err != nil {
+		t.Fatalf("EnvContributionSettings after save returned error: %v", err)
+	}
+	if got.PublicEnvPatternsEnabled || !got.PrivateLocalEnvPatternsEnabled || !got.ConsentShown {
+		t.Fatalf("expected saved settings, got %+v", got)
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Fatalf("expected updated timestamp")
+	}
+}
+
+func TestSQLiteStoreEnvContributionQueueRetentionAndClear(t *testing.T) {
+	store := openTestSQLiteStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.SaveEnvContributionQueueItem(ctx, domain.EnvContributionQueueItem{
+		EventType:   domain.EnvContributionEventAnalysis,
+		PayloadJSON: `{"old":true}`,
+		CreatedAt:   now.Add(-31 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveEnvContributionQueueItem old returned error: %v", err)
+	}
+	for i := 0; i < 105; i++ {
+		if _, err := store.SaveEnvContributionQueueItem(ctx, domain.EnvContributionQueueItem{
+			EventType:   domain.EnvContributionEventAnalysis,
+			PayloadJSON: fmt.Sprintf(`{"index":%d}`, i),
+			CreatedAt:   now.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("SaveEnvContributionQueueItem %d returned error: %v", i, err)
+		}
+	}
+
+	status, err := store.EnvContributionQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("EnvContributionQueueStatus returned error: %v", err)
+	}
+	if status.Count != 100 {
+		t.Fatalf("expected queue to keep 100 newest items, got %+v", status)
+	}
+	items, err := store.EnvContributionQueueItems(ctx, 200)
+	if err != nil {
+		t.Fatalf("EnvContributionQueueItems returned error: %v", err)
+	}
+	if len(items) != 100 {
+		t.Fatalf("expected 100 queue items, got %d", len(items))
+	}
+	for _, item := range items {
+		if strings.Contains(item.PayloadJSON, `"old":true`) {
+			t.Fatalf("expected old payload pruned, got %+v", item)
+		}
+	}
+
+	if err := store.ClearEnvContributionQueue(ctx); err != nil {
+		t.Fatalf("ClearEnvContributionQueue returned error: %v", err)
+	}
+	status, err = store.EnvContributionQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("EnvContributionQueueStatus after clear returned error: %v", err)
+	}
+	if status.Count != 0 {
+		t.Fatalf("expected cleared queue, got %+v", status)
 	}
 }
 

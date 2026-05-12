@@ -583,6 +583,90 @@ type EnvVaultPromptSuppression struct {
 	SuppressedAt       time.Time `json:"suppressedAt"`
 }
 
+type EnvContributionSettings struct {
+	PublicEnvPatternsEnabled       bool      `json:"publicEnvPatternsEnabled"`
+	PrivateLocalEnvPatternsEnabled bool      `json:"privateLocalEnvPatternsEnabled"`
+	ConsentShown                   bool      `json:"consentShown"`
+	UpdatedAt                      time.Time `json:"updatedAt"`
+}
+
+type EnvContributionSettingsResponse struct {
+	Settings EnvContributionSettings    `json:"settings"`
+	Queue    EnvContributionQueueStatus `json:"queue"`
+}
+
+type EnvContributionQueueStatus struct {
+	Count           int       `json:"count"`
+	OldestCreatedAt time.Time `json:"oldestCreatedAt,omitempty"`
+}
+
+const (
+	EnvContributionEventAnalysis    = "analysis"
+	EnvContributionEventSaveOutcome = "save_outcome"
+)
+
+type EnvContributionQueueItem struct {
+	ID            int64     `json:"id"`
+	EventType     string    `json:"eventType"`
+	PayloadJSON   string    `json:"payloadJson"`
+	CreatedAt     time.Time `json:"createdAt"`
+	Attempts      int       `json:"attempts"`
+	LastAttemptAt time.Time `json:"lastAttemptAt,omitempty"`
+}
+
+type EnvContributionPayload struct {
+	SchemaVersion  string                   `json:"schemaVersion"`
+	EventType      string                   `json:"eventType"`
+	AppVersion     string                   `json:"appVersion"`
+	CatalogVersion string                   `json:"catalogVersion"`
+	OS             EnvContributionOS        `json:"os"`
+	Repo           EnvContributionRepo      `json:"repo"`
+	EnvNames       []string                 `json:"envNames"`
+	Targets        []EnvContributionTarget  `json:"targets"`
+	Stacks         []EnvContributionStack   `json:"stacks"`
+	Outcomes       []EnvContributionOutcome `json:"outcomes,omitempty"`
+	AI             EnvContributionAI        `json:"ai,omitempty"`
+}
+
+type EnvContributionOS struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	Arch    string `json:"arch,omitempty"`
+}
+
+type EnvContributionRepo struct {
+	Public             bool   `json:"public"`
+	URL                string `json:"url,omitempty"`
+	CommitSHA          string `json:"commitSha,omitempty"`
+	EnvRelevantDirty   bool   `json:"envRelevantDirty,omitempty"`
+	IdentityOmitted    bool   `json:"identityOmitted,omitempty"`
+	PrivateOrUncertain bool   `json:"privateOrUncertain,omitempty"`
+}
+
+type EnvContributionTarget struct {
+	RelativePath string `json:"relativePath"`
+}
+
+type EnvContributionStack struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+type EnvContributionOutcome struct {
+	TargetRelativePath string `json:"targetRelativePath"`
+	VariableName       string `json:"variableName"`
+	ValueClass         string `json:"valueClass,omitempty"`
+	FillOutcome        string `json:"fillOutcome,omitempty"`
+	ValueState         string `json:"valueState"`
+	Saved              bool   `json:"saved"`
+	ErrorKind          string `json:"errorKind,omitempty"`
+}
+
+type EnvContributionAI struct {
+	ReviewCount  int  `json:"reviewCount,omitempty"`
+	PatchApplied bool `json:"patchApplied,omitempty"`
+}
+
 type ServiceDependency struct {
 	Name         string   `json:"name"`
 	Scope        string   `json:"scope"`

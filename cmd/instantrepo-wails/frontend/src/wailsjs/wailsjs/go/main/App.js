@@ -10,8 +10,16 @@ export function ApproveEnvVaultEntry(arg1) {
   return window['go']['main']['App']['ApproveEnvVaultEntry'](arg1);
 }
 
+export function ClearEnvContributionQueue() {
+  return window['go']['main']['App']['ClearEnvContributionQueue']();
+}
+
 export function ClonePreflight(arg1, arg2) {
   return window['go']['main']['App']['ClonePreflight'](arg1, arg2);
+}
+
+export function EnvContributionSettings() {
+  return window['go']['main']['App']['EnvContributionSettings']();
 }
 
 export function ExecuteStep(arg1, arg2, arg3, arg4) {
@@ -50,6 +58,10 @@ export function OpenDirectory() {
   return window['go']['main']['App']['OpenDirectory']();
 }
 
+export function RecordEnvContributionConsent(arg1) {
+  return window['go']['main']['App']['RecordEnvContributionConsent'](arg1);
+}
+
 export function RemoveEnvVaultEntry(arg1) {
   return window['go']['main']['App']['RemoveEnvVaultEntry'](arg1);
 }
@@ -60,6 +72,10 @@ export function RevealEnvVaultEntry(arg1) {
 
 export function RevokeEnvVaultApproval(arg1) {
   return window['go']['main']['App']['RevokeEnvVaultApproval'](arg1);
+}
+
+export function SaveEnvContributionSettings(arg1) {
+  return window['go']['main']['App']['SaveEnvContributionSettings'](arg1);
 }
 
 export function SaveEnvDraft(arg1, arg2) {

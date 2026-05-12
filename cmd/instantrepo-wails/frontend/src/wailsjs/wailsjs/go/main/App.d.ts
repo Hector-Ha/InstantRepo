@@ -6,7 +6,11 @@ export function AnalyzeRepository(arg1:string,arg2:string):Promise<domain.Analyz
 
 export function ApproveEnvVaultEntry(arg1:domain.EnvVaultApproval):Promise<void>;
 
+export function ClearEnvContributionQueue():Promise<domain.EnvContributionSettingsResponse>;
+
 export function ClonePreflight(arg1:string,arg2:string):Promise<domain.ClonePreflightResponse>;
+
+export function EnvContributionSettings():Promise<domain.EnvContributionSettingsResponse>;
 
 export function ExecuteStep(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<domain.ExecuteResponse>;
 
@@ -26,11 +30,15 @@ export function MarkEnvVaultEntryStatus(arg1:number,arg2:string):Promise<void>;
 
 export function OpenDirectory():Promise<string>;
 
+export function RecordEnvContributionConsent(arg1:boolean):Promise<domain.EnvContributionSettingsResponse>;
+
 export function RemoveEnvVaultEntry(arg1:number):Promise<void>;
 
 export function RevealEnvVaultEntry(arg1:domain.EnvVaultRevealRequest):Promise<domain.EnvVaultRevealResponse>;
 
 export function RevokeEnvVaultApproval(arg1:number):Promise<void>;
+
+export function SaveEnvContributionSettings(arg1:domain.EnvContributionSettings):Promise<domain.EnvContributionSettingsResponse>;
 
 export function SaveEnvDraft(arg1:string,arg2:domain.EnvDraft):Promise<domain.ExecuteResponse>;
 

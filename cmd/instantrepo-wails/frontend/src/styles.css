@@ -1002,6 +1002,47 @@ select {
   box-shadow: var(--shadow-hover);
 }
 
+.settings-layout {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.settings-panel h3 {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.settings-panel p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.queue-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 /* ─── Steps ─────────────────────────────────────────────────── */
 
 .steps-layout {

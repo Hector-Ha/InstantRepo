@@ -2,17 +2,21 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnalyzeRepository,
   ApproveEnvVaultEntry,
+  ClearEnvContributionQueue,
   ExecuteStep,
   GenerateEnvDraft,
+  GetEnvContributionSettings,
   ImportRepository,
   InstalledRepoDetails,
   ListEnvVaultEntries,
   ListInstalledRepos,
   MarkEnvVaultEntryStatus,
   OpenDirectory,
+  RecordEnvContributionConsent,
   RemoveEnvVaultEntry,
   RevealEnvVaultEntry,
   RevokeEnvVaultApproval,
+  SaveEnvContributionSettings,
   SaveEnvDraft,
   SaveEnvVaultCredential,
   SuppressEnvVaultPrompt,
@@ -22,6 +26,8 @@ import type {
   ActivityEntry,
   AnalyzeSnapshot,
   EnvDraft,
+  EnvContributionSettings,
+  EnvContributionSettingsResponse,
   EnvVaultApprovalRequest,
   EnvVaultManagerEntry,
   EnvVaultPromptCandidate,
@@ -37,6 +43,7 @@ import { AppNav, type AppView } from "./AppNav";
 import { EnvDraftPanel } from "./EnvDraftPanel";
 import { EnvVaultManager } from "./EnvVaultManager";
 import { EnvVaultPrompt } from "./EnvVaultPrompt";
+import { SettingsView } from "./SettingsView";
 import { redactLikelySecrets } from "./redaction";
 import { getMissingRequiredTools, getSafetyAttention } from "./attention";
 import {
@@ -454,6 +461,10 @@ export default function App() {
     EnvVaultPromptCandidate[]
   >([]);
   const [vaultPromptDisplayName, setVaultPromptDisplayName] = useState("");
+  const [contributionSettings, setContributionSettings] =
+    useState<EnvContributionSettingsResponse | null>(null);
+  const [contributionLoading, setContributionLoading] = useState(false);
+  const [consentPublicEnabled, setConsentPublicEnabled] = useState(true);
 
   const selectedStep = useMemo(
     () =>
@@ -531,9 +542,28 @@ export default function App() {
     }
   }, [appendActivity]);
 
+  const loadContributionSettings = useCallback(async () => {
+    setContributionLoading(true);
+    try {
+      const response = await GetEnvContributionSettings();
+      setContributionSettings(response);
+      setConsentPublicEnabled(response.settings.publicEnvPatternsEnabled);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Settings Load Failed", message);
+    } finally {
+      setContributionLoading(false);
+    }
+  }, [appendActivity]);
+
   useEffect(() => {
     void loadInstalledRepos();
   }, [loadInstalledRepos]);
+
+  useEffect(() => {
+    void loadContributionSettings();
+  }, [loadContributionSettings]);
 
   useEffect(() => {
     if (activeView === "vault") {
@@ -972,6 +1002,53 @@ export default function App() {
     }
   };
 
+  const handleRecordContributionConsent = async (publicEnabled: boolean) => {
+    setContributionLoading(true);
+    try {
+      const response = await RecordEnvContributionConsent(publicEnabled);
+      setContributionSettings(response);
+      appendActivity("success", "Settings Saved", "Env Pattern Contribution choice saved.");
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Settings Save Failed", message);
+    } finally {
+      setContributionLoading(false);
+    }
+  };
+
+  const handleSaveContributionSettings = async (
+    settings: EnvContributionSettings,
+  ) => {
+    setContributionLoading(true);
+    try {
+      const response = await SaveEnvContributionSettings(settings);
+      setContributionSettings(response);
+      appendActivity("success", "Settings Saved", "Contribution settings updated.");
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Settings Save Failed", message);
+    } finally {
+      setContributionLoading(false);
+    }
+  };
+
+  const handleClearContributionQueue = async () => {
+    setContributionLoading(true);
+    try {
+      const response = await ClearEnvContributionQueue();
+      setContributionSettings(response);
+      appendActivity("success", "Queue Cleared", "Env Pattern Contribution queue cleared.");
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Queue Clear Failed", message);
+    } finally {
+      setContributionLoading(false);
+    }
+  };
+
   const handleRunStep = async () => {
     if (!snapshot || !selectedStep) {
       setErrorMessage("Analyze a repository before running a setup step.");
@@ -1184,18 +1261,18 @@ export default function App() {
         ) : null}
 
         {activeView === "settings" ? (
-          <section className="card" aria-labelledby="section-settings">
-            <div className="section-heading">
-              <div>
-                <h2 id="section-settings">Settings</h2>
-                <p>App settings and contribution controls land in later slices.</p>
-              </div>
-            </div>
-            <div className="empty-state">
-              <div className="empty-state-icon">□</div>
-              <p>Local app configuration will appear here.</p>
-            </div>
-          </section>
+          <SettingsView
+            response={contributionSettings}
+            loading={contributionLoading}
+            onRefresh={() => void loadContributionSettings()}
+            onSaveSettings={(settings) =>
+              void handleSaveContributionSettings(settings)
+            }
+            onRecordConsent={(publicEnabled) =>
+              void handleRecordContributionConsent(publicEnabled)
+            }
+            onClearQueue={() => void handleClearContributionQueue()}
+          />
         ) : null}
 
         {activeView === "setup" ? (
@@ -1583,6 +1660,41 @@ export default function App() {
             onDismiss={dismissVaultPrompt}
             onSuppress={() => void handleSuppressVaultPrompt()}
           />
+        ) : null}
+
+        {contributionSettings &&
+        !contributionSettings.settings.consentShown &&
+        activeView !== "settings" ? (
+          <div className="modal-backdrop" role="presentation">
+            <section className="vault-prompt" role="dialog" aria-modal="true">
+              <div className="section-heading">
+                <div>
+                  <h2>Env Pattern Contribution</h2>
+                  <p>Share value-free env names from confirmed public repos.</p>
+                </div>
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={consentPublicEnabled}
+                  onChange={(event) =>
+                    setConsentPublicEnabled(event.currentTarget.checked)
+                  }
+                />
+                <span>Public repos</span>
+              </label>
+              <div className="vault-prompt-actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleRecordContributionConsent(consentPublicEnabled)
+                  }
+                >
+                  Save choice
+                </button>
+              </div>
+            </section>
+          </div>
         ) : null}
       </main>
     </div>

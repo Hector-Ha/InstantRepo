@@ -2,6 +2,8 @@ import type { ClonePreflightResponse } from "./clonePreflight";
 import type {
   AnalyzeSnapshot,
   EnvDraft,
+  EnvContributionSettings,
+  EnvContributionSettingsResponse,
   EnvVaultApprovalRequest,
   EnvVaultManagerResponse,
   EnvVaultRevealRequest,
@@ -23,6 +25,8 @@ export interface DesktopAppBridge {
     repoURL: string,
     destinationRoot: string,
   ): Promise<ClonePreflightResponse>;
+  ClearEnvContributionQueue(): Promise<EnvContributionSettingsResponse>;
+  EnvContributionSettings(): Promise<EnvContributionSettingsResponse>;
   ExecuteStep(
     repoURL: string,
     localPath: string,
@@ -47,8 +51,14 @@ export interface DesktopAppBridge {
   RevealEnvVaultEntry(
     req: EnvVaultRevealRequest,
   ): Promise<EnvVaultRevealResponse>;
+  RecordEnvContributionConsent(
+    publicEnabled: boolean,
+  ): Promise<EnvContributionSettingsResponse>;
   RevokeEnvVaultApproval(approvalID: number): Promise<void>;
   SaveEnvDraft(localPath: string, draft: EnvDraft): Promise<ExecuteResponse>;
+  SaveEnvContributionSettings(
+    settings: EnvContributionSettings,
+  ): Promise<EnvContributionSettingsResponse>;
   SaveEnvFile(localPath: string, content: string): Promise<ExecuteResponse>;
   SaveEnvVaultCredential(
     req: EnvVaultSaveRequest,
@@ -119,6 +129,12 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     ClonePreflight(repoURL: string, destinationRoot: string) {
       return call("ClonePreflight")(repoURL, destinationRoot);
     },
+    ClearEnvContributionQueue() {
+      return call("ClearEnvContributionQueue")();
+    },
+    EnvContributionSettings() {
+      return call("EnvContributionSettings")();
+    },
     ExecuteStep(
       repoURL: string,
       localPath: string,
@@ -160,8 +176,14 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     RevealEnvVaultEntry(req: EnvVaultRevealRequest) {
       return call("RevealEnvVaultEntry")(req);
     },
+    RecordEnvContributionConsent(publicEnabled: boolean) {
+      return call("RecordEnvContributionConsent")(publicEnabled);
+    },
     RevokeEnvVaultApproval(approvalID: number) {
       return call("RevokeEnvVaultApproval")(approvalID);
+    },
+    SaveEnvContributionSettings(settings: EnvContributionSettings) {
+      return call("SaveEnvContributionSettings")(settings);
     },
     SaveEnvFile(localPath: string, content: string) {
       return call("SaveEnvFile")(localPath, content);
@@ -192,6 +214,8 @@ export const desktopApi = createDesktopApi();
 
 export const AnalyzeRepository = desktopApi.AnalyzeRepository;
 export const ClonePreflight = desktopApi.ClonePreflight;
+export const ClearEnvContributionQueue = desktopApi.ClearEnvContributionQueue;
+export const GetEnvContributionSettings = desktopApi.EnvContributionSettings;
 export const ExecuteStep = desktopApi.ExecuteStep;
 export const ExportRepoDiagnostics = desktopApi.ExportRepoDiagnostics;
 export const GenerateEnvDraft = desktopApi.GenerateEnvDraft;
@@ -204,7 +228,11 @@ export const MarkEnvVaultEntryStatus = desktopApi.MarkEnvVaultEntryStatus;
 export const OpenDirectory = desktopApi.OpenDirectory;
 export const RemoveEnvVaultEntry = desktopApi.RemoveEnvVaultEntry;
 export const RevealEnvVaultEntry = desktopApi.RevealEnvVaultEntry;
+export const RecordEnvContributionConsent =
+  desktopApi.RecordEnvContributionConsent;
 export const RevokeEnvVaultApproval = desktopApi.RevokeEnvVaultApproval;
+export const SaveEnvContributionSettings =
+  desktopApi.SaveEnvContributionSettings;
 export const SaveEnvFile = desktopApi.SaveEnvFile;
 export const SaveEnvDraft = desktopApi.SaveEnvDraft;
 export const SaveEnvVaultCredential = desktopApi.SaveEnvVaultCredential;

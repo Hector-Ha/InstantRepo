@@ -22,6 +22,7 @@ type AppService struct {
 	executor       *Executor
 	envDrafts      *EnvDraftManager
 	vault          *EnvVaultService
+	contribution   *EnvContributionService
 	installedRepos InstalledRepoStore
 	setupRecorder  *setupSessionRecorder
 	disk           DiskChecker
@@ -68,6 +69,9 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 	}
 	if vaultStore, ok := installedRepos.(EnvVaultStore); ok {
 		app.vault = NewEnvVaultService(vaultStore, NewOSCredentialStore())
+	}
+	if contributionStore, ok := installedRepos.(EnvContributionStore); ok {
+		app.contribution = NewEnvContributionService(contributionStore, nil)
 	}
 	return app
 }
@@ -120,7 +124,7 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 		return domain.AnalyzeResponse{}, err
 	}
 
-	return domain.AnalyzeResponse{
+	resp := domain.AnalyzeResponse{
 		Source: domain.RepoSource{
 			Type:    sourceType,
 			RepoURL: req.RepoURL,
@@ -129,7 +133,11 @@ func (s *AppService) Analyze(ctx context.Context, req domain.AnalyzeRequest) (do
 		Analysis:    analysis,
 		Environment: environment,
 		Plan:        plan,
-	}, nil
+	}
+	if s.contribution != nil {
+		_ = s.contribution.RecordAnalysis(ctx, resp)
+	}
+	return resp, nil
 }
 
 func (s *AppService) persistAnalyzedRepo(ctx context.Context, repoURL, localPath string) error {
@@ -390,6 +398,9 @@ func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath strin
 		return resp, finishErr
 	}
 	resp.VaultPromptCandidates = candidates
+	if s.contribution != nil {
+		_ = s.contribution.RecordSaveOutcome(ctx, resp, draft)
+	}
 	return resp, nil
 }
 

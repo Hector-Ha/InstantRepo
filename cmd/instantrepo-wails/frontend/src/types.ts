@@ -187,6 +187,23 @@ export interface EnvVaultRevealResponse {
   revealUntil: string;
 }
 
+export interface EnvContributionSettings {
+  publicEnvPatternsEnabled: boolean;
+  privateLocalEnvPatternsEnabled: boolean;
+  consentShown: boolean;
+  updatedAt: string;
+}
+
+export interface EnvContributionQueueStatus {
+  count: number;
+  oldestCreatedAt?: string;
+}
+
+export interface EnvContributionSettingsResponse {
+  settings: EnvContributionSettings;
+  queue: EnvContributionQueueStatus;
+}
+
 export interface EnvDraftTarget {
   relativePath: string;
   absolutePath: string;
