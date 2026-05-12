@@ -100,6 +100,14 @@ func (a *App) ClearEnvContributionQueue() (domain.EnvContributionSettingsRespons
 	return a.service.ClearEnvContributionQueue(a.appContext())
 }
 
+func (a *App) AIEnvReviewSettings() (domain.AIEnvReviewSettings, error) {
+	return a.service.AIEnvReviewSettings(a.appContext())
+}
+
+func (a *App) SaveAIEnvReviewSettings(settings domain.AIEnvReviewSettings) (domain.AIEnvReviewSettings, error) {
+	return a.service.SaveAIEnvReviewSettings(a.appContext(), settings)
+}
+
 func (a *App) ApproveEnvVaultEntry(approval domain.EnvVaultApproval) error {
 	return a.service.ApproveEnvVaultEntry(a.appContext(), approval)
 }

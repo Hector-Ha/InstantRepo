@@ -14,9 +14,11 @@ test("SettingsView renders contribution consent and queue controls", () => {
         },
         queue: { count: 2 },
       }}
+      aiEnvReviewSettings={{ enabled: false, updatedAt: "" }}
       loading={false}
       onRefresh={() => {}}
       onSaveSettings={() => {}}
+      onSaveAIEnvReviewSettings={() => {}}
       onRecordConsent={() => {}}
       onClearQueue={() => {}}
     />,
@@ -27,5 +29,6 @@ test("SettingsView renders contribution consent and queue controls", () => {
   expect(html).toContain("Private/local repos");
   expect(html).toContain("2 queued");
   expect(html).toContain("Clear queue");
+  expect(html).toContain("AI Env Review");
   expect(html).toContain("checked");
 });

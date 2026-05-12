@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  AIEnvReviewSettings,
   EnvContributionSettings,
   EnvContributionSettingsResponse,
 } from "./types";
@@ -10,16 +11,20 @@ function queueLabel(count: number) {
 
 export function SettingsView({
   response,
+  aiEnvReviewSettings,
   loading,
   onRefresh,
   onSaveSettings,
+  onSaveAIEnvReviewSettings,
   onRecordConsent,
   onClearQueue,
 }: {
   response: EnvContributionSettingsResponse | null;
+  aiEnvReviewSettings: AIEnvReviewSettings | null;
   loading: boolean;
   onRefresh: () => void;
   onSaveSettings: (settings: EnvContributionSettings) => void;
+  onSaveAIEnvReviewSettings: (settings: AIEnvReviewSettings) => void;
   onRecordConsent: (publicEnabled: boolean) => void;
   onClearQueue: () => void;
 }) {
@@ -117,6 +122,23 @@ export function SettingsView({
             >
               Clear queue
             </button>
+          </section>
+
+          <section className="settings-panel">
+            <h3>AI Env Review</h3>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={aiEnvReviewSettings?.enabled ?? false}
+                onChange={(event) =>
+                  onSaveAIEnvReviewSettings({
+                    ...(aiEnvReviewSettings ?? { enabled: false }),
+                    enabled: event.currentTarget.checked,
+                  })
+                }
+              />
+              <span>Review low-confidence env defaults</span>
+            </label>
           </section>
         </div>
       )}

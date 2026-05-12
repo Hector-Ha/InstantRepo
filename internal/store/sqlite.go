@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +25,8 @@ const maxEnvContributionQueueItems = 100
 const setupLogRetention = 7 * 24 * time.Hour
 const envContributionQueueRetention = 30 * 24 * time.Hour
 const envContributionSettingsKey = "env_pattern_contribution_settings"
+const aiEnvReviewSettingsKey = "ai_env_review_settings"
+const envPortAssignmentKeyPrefix = "env_port_assignment:"
 
 type SQLiteStore struct {
 	db     *sql.DB
@@ -492,6 +496,44 @@ DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
 	return nil
 }
 
+func (s *SQLiteStore) AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error) {
+	var settings domain.AIEnvReviewSettings
+	var raw string
+	err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM app_settings
+WHERE key = ?;
+`, aiEnvReviewSettingsKey).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return settings, nil
+	}
+	if err != nil {
+		return domain.AIEnvReviewSettings{}, fmt.Errorf("query ai env review settings: %w", err)
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return domain.AIEnvReviewSettings{}, fmt.Errorf("parse ai env review settings: %w", err)
+	}
+	return settings, nil
+}
+
+func (s *SQLiteStore) SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) error {
+	settings.UpdatedAt = time.Now().UTC()
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("encode ai env review settings: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO app_settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key)
+DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+`, aiEnvReviewSettingsKey, string(raw), formatTime(settings.UpdatedAt))
+	if err != nil {
+		return fmt.Errorf("save ai env review settings: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) SaveEnvContributionQueueItem(ctx context.Context, item domain.EnvContributionQueueItem) (domain.EnvContributionQueueItem, error) {
 	if strings.TrimSpace(item.EventType) == "" || strings.TrimSpace(item.PayloadJSON) == "" {
 		return domain.EnvContributionQueueItem{}, fmt.Errorf("contribution event type and payload are required")
@@ -577,6 +619,89 @@ FROM env_pattern_contribution_queue;
 func (s *SQLiteStore) ClearEnvContributionQueue(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM env_pattern_contribution_queue;`); err != nil {
 		return fmt.Errorf("clear env contribution queue: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) MarkEnvContributionQueueAttempt(ctx context.Context, id int64, attemptedAt time.Time) error {
+	if id == 0 {
+		return fmt.Errorf("env contribution queue item is required")
+	}
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE env_pattern_contribution_queue
+SET attempts = attempts + 1,
+	last_attempt_at = ?
+WHERE id = ?;
+`, formatTime(attemptedAt), id); err != nil {
+		return fmt.Errorf("mark env contribution queue attempt: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteEnvContributionQueueItem(ctx context.Context, id int64) error {
+	if id == 0 {
+		return fmt.Errorf("env contribution queue item is required")
+	}
+	if _, err := s.db.ExecContext(ctx, `
+DELETE FROM env_pattern_contribution_queue
+WHERE id = ?;
+`, id); err != nil {
+		return fmt.Errorf("delete env contribution queue item: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) EnvPortAssignments(ctx context.Context, repoPath string) ([]domain.EnvPortAssignment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT value
+FROM app_settings
+WHERE key LIKE ?;
+`, envPortAssignmentKeyPrefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("query env port assignments: %w", err)
+	}
+	defer rows.Close()
+
+	var assignments []domain.EnvPortAssignment
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scan env port assignment: %w", err)
+		}
+		var assignment domain.EnvPortAssignment
+		if err := json.Unmarshal([]byte(raw), &assignment); err != nil {
+			return nil, fmt.Errorf("parse env port assignment: %w", err)
+		}
+		if assignment.RepoPath == repoPath {
+			assignments = append(assignments, assignment)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read env port assignments: %w", err)
+	}
+	return assignments, nil
+}
+
+func (s *SQLiteStore) SaveEnvPortAssignment(ctx context.Context, assignment domain.EnvPortAssignment) error {
+	if strings.TrimSpace(assignment.RepoPath) == "" || strings.TrimSpace(assignment.TargetDir) == "" || strings.TrimSpace(assignment.Purpose) == "" || assignment.Port <= 0 {
+		return fmt.Errorf("repo, target, purpose, and port are required")
+	}
+	raw, err := json.Marshal(assignment)
+	if err != nil {
+		return fmt.Errorf("encode env port assignment: %w", err)
+	}
+	now := time.Now().UTC()
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO app_settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key)
+DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+`, envPortAssignmentKey(assignment), string(raw), formatTime(now))
+	if err != nil {
+		return fmt.Errorf("save env port assignment: %w", err)
 	}
 	return nil
 }
@@ -1316,6 +1441,15 @@ func defaultEnvContributionSettings() domain.EnvContributionSettings {
 		PrivateLocalEnvPatternsEnabled: false,
 		ConsentShown:                   false,
 	}
+}
+
+func envPortAssignmentKey(assignment domain.EnvPortAssignment) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		assignment.RepoPath,
+		assignment.TargetDir,
+		assignment.Purpose,
+	}, "\x00")))
+	return envPortAssignmentKeyPrefix + hex.EncodeToString(sum[:])
 }
 
 func formatTime(value time.Time) string {

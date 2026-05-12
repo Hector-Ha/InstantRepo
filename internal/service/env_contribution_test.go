@@ -293,6 +293,34 @@ func TestEnvContributionQueuesWhenFakeSenderFails(t *testing.T) {
 	}
 }
 
+func TestEnvContributionRetriesQueuedPayloadsWhenSenderRecovers(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	if _, err := sqliteStore.SaveEnvContributionQueueItem(ctx, domain.EnvContributionQueueItem{
+		EventType:   domain.EnvContributionEventAnalysis,
+		PayloadJSON: `{"schemaVersion":"2026-05-23","eventType":"analysis","envNames":["DATABASE_URL"]}`,
+	}); err != nil {
+		t.Fatalf("SaveEnvContributionQueueItem returned error: %v", err)
+	}
+	sender := &fakeContributionSender{}
+	service := NewEnvContributionService(sqliteStore, sender)
+
+	if err := service.RetryQueue(ctx); err != nil {
+		t.Fatalf("RetryQueue returned error: %v", err)
+	}
+	status, err := sqliteStore.EnvContributionQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("EnvContributionQueueStatus returned error: %v", err)
+	}
+	if status.Count != 0 || len(sender.payload) != 1 {
+		t.Fatalf("expected queue drained after retry, status=%+v sent=%d", status, len(sender.payload))
+	}
+	if strings.Join(sender.payload[0].EnvNames, ",") != "DATABASE_URL" {
+		t.Fatalf("expected queued payload to be sent, got %+v", sender.payload[0])
+	}
+}
+
 func TestEnvContributionDisabledSettingsDoNotQueue(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore := openServiceTestSQLiteStore(t)

@@ -49,6 +49,34 @@ type SetupSessionStore interface {
 	CleanupSetupSessionRetention(ctx context.Context, now time.Time) error
 }
 
+type AIEnvReviewSettingsStore interface {
+	AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error)
+}
+
+type AIEnvReviewSettingsSaveStore interface {
+	AIEnvReviewSettingsStore
+	SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) error
+}
+
+func (s *AppService) AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error) {
+	settingsStore, ok := s.installedRepos.(AIEnvReviewSettingsStore)
+	if !ok || settingsStore == nil {
+		return domain.AIEnvReviewSettings{}, nil
+	}
+	return settingsStore.AIEnvReviewSettings(ctx)
+}
+
+func (s *AppService) SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) (domain.AIEnvReviewSettings, error) {
+	settingsStore, ok := s.installedRepos.(AIEnvReviewSettingsSaveStore)
+	if !ok || settingsStore == nil {
+		return domain.AIEnvReviewSettings{}, nil
+	}
+	if err := settingsStore.SaveAIEnvReviewSettings(ctx, settings); err != nil {
+		return domain.AIEnvReviewSettings{}, err
+	}
+	return settingsStore.AIEnvReviewSettings(ctx)
+}
+
 func NewAppService() *AppService {
 	installedRepos, err := store.OpenDefaultSQLiteStore()
 	if err != nil {
@@ -75,6 +103,9 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 	}
 	if contributionStore, ok := installedRepos.(EnvContributionStore); ok {
 		app.contribution = NewEnvContributionService(contributionStore, nil)
+	}
+	if portStore, ok := installedRepos.(EnvPortAssignmentStore); ok {
+		app.envDrafts.portStore = portStore
 	}
 	return app
 }
@@ -343,10 +374,22 @@ func (s *AppService) GenerateEnvDraft(ctx context.Context, localPath string) (do
 			return domain.EnvDraft{}, err
 		}
 	}
-	if s.aiEnvReviewEnabled && s.aiEnvReview != nil {
+	if s.aiEnvReview != nil && s.aiEnvReviewEnabledFor(ctx) {
 		_ = s.aiEnvReview.ReviewDraft(ctx, analyzeResp, &draft)
 	}
 	return draft, nil
+}
+
+func (s *AppService) aiEnvReviewEnabledFor(ctx context.Context) bool {
+	if s.aiEnvReviewEnabled {
+		return true
+	}
+	settingsStore, ok := s.installedRepos.(AIEnvReviewSettingsStore)
+	if !ok || settingsStore == nil {
+		return false
+	}
+	settings, err := settingsStore.AIEnvReviewSettings(ctx)
+	return err == nil && settings.Enabled
 }
 
 func (s *AppService) SaveStructuredEnvDraft(ctx context.Context, localPath string, edited domain.EnvDraft) (domain.ExecuteResponse, error) {

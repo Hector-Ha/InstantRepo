@@ -1,9 +1,10 @@
 import type { ClonePreflightResponse } from "./clonePreflight";
 import type {
+  AIEnvReviewSettings,
   AnalyzeSnapshot,
-  EnvDraft,
   EnvContributionSettings,
   EnvContributionSettingsResponse,
+  EnvDraft,
   EnvVaultApprovalRequest,
   EnvVaultManagerResponse,
   EnvVaultRevealRequest,
@@ -20,6 +21,7 @@ export const desktopSessionUnavailableMessage =
   "Desktop controls are unavailable in this browser session. Open the InstantRepo desktop window to use this action.";
 
 export interface DesktopAppBridge {
+  AIEnvReviewSettings(): Promise<AIEnvReviewSettings>;
   AnalyzeRepository(repoURL: string, localPath: string): Promise<AnalyzeSnapshot>;
   ClonePreflight(
     repoURL: string,
@@ -59,6 +61,9 @@ export interface DesktopAppBridge {
   SaveEnvContributionSettings(
     settings: EnvContributionSettings,
   ): Promise<EnvContributionSettingsResponse>;
+  SaveAIEnvReviewSettings(
+    settings: AIEnvReviewSettings,
+  ): Promise<AIEnvReviewSettings>;
   SaveEnvFile(localPath: string, content: string): Promise<ExecuteResponse>;
   SaveEnvVaultCredential(
     req: EnvVaultSaveRequest,
@@ -123,6 +128,9 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     getDesktopMethod(source ?? currentWindow(), methodName);
 
   return {
+    AIEnvReviewSettings() {
+      return call("AIEnvReviewSettings")();
+    },
     AnalyzeRepository(repoURL: string, localPath: string) {
       return call("AnalyzeRepository")(repoURL, localPath);
     },
@@ -185,6 +193,9 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     SaveEnvContributionSettings(settings: EnvContributionSettings) {
       return call("SaveEnvContributionSettings")(settings);
     },
+    SaveAIEnvReviewSettings(settings: AIEnvReviewSettings) {
+      return call("SaveAIEnvReviewSettings")(settings);
+    },
     SaveEnvFile(localPath: string, content: string) {
       return call("SaveEnvFile")(localPath, content);
     },
@@ -215,6 +226,7 @@ export const desktopApi = createDesktopApi();
 export const AnalyzeRepository = desktopApi.AnalyzeRepository;
 export const ClonePreflight = desktopApi.ClonePreflight;
 export const ClearEnvContributionQueue = desktopApi.ClearEnvContributionQueue;
+export const GetAIEnvReviewSettings = desktopApi.AIEnvReviewSettings;
 export const GetEnvContributionSettings = desktopApi.EnvContributionSettings;
 export const ExecuteStep = desktopApi.ExecuteStep;
 export const ExportRepoDiagnostics = desktopApi.ExportRepoDiagnostics;
@@ -233,6 +245,7 @@ export const RecordEnvContributionConsent =
 export const RevokeEnvVaultApproval = desktopApi.RevokeEnvVaultApproval;
 export const SaveEnvContributionSettings =
   desktopApi.SaveEnvContributionSettings;
+export const SaveAIEnvReviewSettings = desktopApi.SaveAIEnvReviewSettings;
 export const SaveEnvFile = desktopApi.SaveEnvFile;
 export const SaveEnvDraft = desktopApi.SaveEnvDraft;
 export const SaveEnvVaultCredential = desktopApi.SaveEnvVaultCredential;

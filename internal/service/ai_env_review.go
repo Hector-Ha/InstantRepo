@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	aiEnvReviewSecretTokenPattern = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{6,}|ghp_[a-z0-9_]{6,}|github_pat_[a-z0-9_]{6,}|xox[baprs]-[a-z0-9-]{6,}|sg\.[a-z0-9._-]{6,})`)
-	aiEnvReviewAbsPathPattern     = regexp.MustCompile(`([A-Za-z]:\\[^\s"']+|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,})`)
+	aiEnvReviewSecretTokenPattern   = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{6,}|ghp_[a-z0-9_]{6,}|github_pat_[a-z0-9_]{6,}|xox[baprs]-[a-z0-9-]{6,}|sg\.[a-z0-9._-]{6,}|bearer[._-][a-z0-9._-]{8,}|eyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,})`)
+	aiEnvReviewAbsPathPattern       = regexp.MustCompile(`([A-Za-z]:\\[^\s"']+|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,})`)
+	aiEnvReviewCredentialURLPattern = regexp.MustCompile(`(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|smtp)://[^\s/@:]+:[^\s/@]+@[^\s]+`)
 )
 
 type AIEnvReviewService struct {
@@ -178,6 +179,9 @@ func looksLikeProviderCredentialValue(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	if lower == "" {
 		return false
+	}
+	if aiEnvReviewCredentialURLPattern.MatchString(lower) {
+		return true
 	}
 	secretMarkers := []string{"sk-", "ghp_", "github_pat_", "xoxb-", "sg.", "api_key", "apikey", "secret", "token"}
 	for _, marker := range secretMarkers {
@@ -398,6 +402,7 @@ func sanitizeAIEnvReviewTopology(repoPath string, topology domain.AppTopology) d
 	out := domain.AppTopology{Signals: make([]domain.AppTopologySignal, 0, len(topology.Signals))}
 	for _, signal := range topology.Signals {
 		signal.TargetDir = safeRelativePath(repoPath, signal.TargetDir)
+		signal.Evidence = redactAIEnvReviewText(signal.Evidence, aiEnvReviewMaxSnippet)
 		out.Signals = append(out.Signals, signal)
 	}
 	return out
@@ -479,6 +484,7 @@ func redactAIEnvReviewText(text string, limit int) string {
 			continue
 		}
 		line = aiEnvReviewSecretTokenPattern.ReplaceAllString(line, "[redacted]")
+		line = aiEnvReviewCredentialURLPattern.ReplaceAllString(line, "[redacted-url]")
 		line = aiEnvReviewAbsPathPattern.ReplaceAllString(line, "[path]")
 		lines[i] = line
 	}

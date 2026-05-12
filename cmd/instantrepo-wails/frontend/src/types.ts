@@ -204,6 +204,11 @@ export interface EnvContributionSettingsResponse {
   queue: EnvContributionQueueStatus;
 }
 
+export interface AIEnvReviewSettings {
+  enabled: boolean;
+  updatedAt?: string;
+}
+
 export interface EnvDraftTarget {
   relativePath: string;
   absolutePath: string;

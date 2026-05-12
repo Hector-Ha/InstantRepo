@@ -96,6 +96,57 @@ func TestBuildAIEnvReviewBundleIsBoundedAndValueFree(t *testing.T) {
 	}
 }
 
+func TestBuildAIEnvReviewBundleRedactsSecretsFromTextAndTopologyEvidence(t *testing.T) {
+	repoPath := t.TempDir()
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuvwxyz"
+	writeTestFile(t, filepath.Join(repoPath, "package.json"), `{"name":"redact-app","scripts":{"dev":"node server.js --token bearer_live_value_123456789"}}`)
+	writeTestFile(t, filepath.Join(repoPath, "README.md"), "Setup with JWT "+jwt+" and Bearer bearer_live_value_123456789 from C:\\Users\\Admin\\secret\\repo\nDATABASE_URL=postgres://user:secretpass@db.example/app\n")
+	writeTestFile(t, filepath.Join(repoPath, "server.js"), "console.log(process.env.SUPABASE_URL, '"+jwt+"')\n")
+	draft := domain.EnvDraft{
+		RepoPath: repoPath,
+		Targets: []domain.EnvDraftTarget{{
+			RelativePath: ".env",
+			AbsolutePath: filepath.Join(repoPath, ".env"),
+			Values: []domain.EnvDraftValue{{
+				Name:       "SUPABASE_URL",
+				ValueClass: domain.EnvValueClassProviderConfig,
+				Confidence: 0.42,
+				Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceCatalog},
+			}},
+		}},
+	}
+	resp := domain.AnalyzeResponse{
+		Source: domain.RepoSource{Path: repoPath},
+		Analysis: domain.RepositoryAnalysis{
+			RepoPath: repoPath,
+			Env: domain.EnvironmentConfig{Variables: []domain.EnvVarRequirement{{
+				Name: "SUPABASE_URL", Source: "code scan", Confidence: 0.42,
+			}}},
+			Topology: domain.AppTopology{Signals: []domain.AppTopologySignal{{
+				Kind: "provider", TargetDir: repoPath, Evidence: "token " + jwt + " at C:\\Users\\Admin\\secret\\repo",
+			}}},
+		},
+	}
+
+	bundle, ok, err := NewAIEnvReviewService(nil).BuildBundle(context.Background(), resp, draft)
+	if err != nil {
+		t.Fatalf("BuildBundle returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected review bundle")
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("marshal bundle: %v", err)
+	}
+	payload := string(raw)
+	for _, forbidden := range []string{jwt, "bearer_live_value_123456789", "C:\\Users\\Admin\\secret\\repo", "secretpass"} {
+		if strings.Contains(payload, forbidden) {
+			t.Fatalf("bundle leaked %q:\n%s", forbidden, payload)
+		}
+	}
+}
+
 func TestValidateEnvPatchRejectsUnsafeOperationsAndProtectedValues(t *testing.T) {
 	repoPath := t.TempDir()
 	draft := domain.EnvDraft{
@@ -120,6 +171,7 @@ func TestValidateEnvPatchRejectsUnsafeOperationsAndProtectedValues(t *testing.T)
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "MISSING", Value: "x"}}},
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "OPENAI_API_KEY", Value: "sk-new-secret"}}},
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "DATABASE_URL", Value: "postgres://ai@localhost/app"}}},
+		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "APP_URL", Value: "postgres://user:pass@db.example/app"}}},
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "APP_URL", Value: "http://localhost:3000"}}},
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "JWT_SECRET", Value: "ai-secret"}}},
 		{Operations: []domain.EnvPatchOperation{{Op: "set_env", TargetRelativePath: ".env", VariableName: "VAULTED_TOKEN", Value: "vault-secret"}}},
@@ -234,6 +286,35 @@ func TestGenerateEnvDraftUsesAIReviewOnlyWhenEnabled(t *testing.T) {
 	invalidValue := envDraftValue(t, invalidDraft.Targets[0], "SUPABASE_URL")
 	if invalidValue.Value == "sk-should-not-apply" || invalidValue.Provenance.Source == domain.EnvValueSourceAIPatch {
 		t.Fatalf("expected invalid patch to fail closed, got %+v", invalidValue)
+	}
+}
+
+func TestGenerateEnvDraftUsesStoredAIReviewSetting(t *testing.T) {
+	ctx := context.Background()
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "package.json"), `{"name":"ai-app","scripts":{"dev":"vite --host 0.0.0.0"}}`)
+	writeTestFile(t, filepath.Join(repoPath, "src", "main.ts"), "console.log(process.env.SUPABASE_URL)\n")
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	if err := sqliteStore.SaveAIEnvReviewSettings(ctx, domain.AIEnvReviewSettings{Enabled: true}); err != nil {
+		t.Fatalf("SaveAIEnvReviewSettings returned error: %v", err)
+	}
+	reviewer := &fakeAIEnvReviewer{patch: domain.EnvPatch{Operations: []domain.EnvPatchOperation{{
+		Op: "set_env", TargetRelativePath: ".env", VariableName: "SUPABASE_URL", Value: "http://localhost:54321", Confidence: 0.9,
+	}}}}
+	app := NewAppServiceWithInstalledRepoStore(sqliteStore)
+	app.aiEnvReview = NewAIEnvReviewService(reviewer)
+
+	draft, err := app.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft returned error: %v", err)
+	}
+	if reviewer.calls != 1 {
+		t.Fatalf("expected stored setting to enable AI review, got %d calls", reviewer.calls)
+	}
+	got := envDraftValue(t, draft.Targets[0], "SUPABASE_URL")
+	if got.Value != "http://localhost:54321" || got.Provenance.Source != domain.EnvValueSourceAIPatch {
+		t.Fatalf("expected stored setting AI patch applied, got %+v", got)
 	}
 }
 

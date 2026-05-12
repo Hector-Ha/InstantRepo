@@ -735,6 +735,18 @@ type EnvContributionAI struct {
 	PatchApplied bool `json:"patchApplied,omitempty"`
 }
 
+type EnvPortAssignment struct {
+	RepoPath  string `json:"repoPath"`
+	TargetDir string `json:"targetDir"`
+	Purpose   string `json:"purpose"`
+	Port      int    `json:"port"`
+}
+
+type AIEnvReviewSettings struct {
+	Enabled   bool      `json:"enabled"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
 type ServiceDependency struct {
 	Name         string   `json:"name"`
 	Scope        string   `json:"scope"`

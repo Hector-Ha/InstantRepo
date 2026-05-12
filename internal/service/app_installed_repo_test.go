@@ -563,6 +563,46 @@ func TestGenerateStructuredEnvDraftReturnsGroupedTargets(t *testing.T) {
 	}
 }
 
+func TestGenerateEnvDraftKeepsAllocatedPortStableAcrossAppManagers(t *testing.T) {
+	ctx := context.Background()
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "package.json"), []byte(`{"dependencies":{"next":"latest","react":"latest"}}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("PORT=\nAPP_URL=\n"), 0o644); err != nil {
+		t.Fatalf("write env template: %v", err)
+	}
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+
+	firstApp := NewAppServiceWithInstalledRepoStore(sqliteStore)
+	firstApp.envDrafts.portAvailable = func(port int) bool { return port != 3000 }
+	firstDraft, err := firstApp.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("first GenerateEnvDraft returned error: %v", err)
+	}
+	firstTarget := envDraftTargetByRelativePath(t, firstDraft, ".env")
+	firstPort := envDraftTargetValue(t, firstTarget, "PORT").Value
+	if firstPort != "3001" {
+		t.Fatalf("expected first draft to choose next free port 3001, got %q", firstPort)
+	}
+
+	secondApp := NewAppServiceWithInstalledRepoStore(sqliteStore)
+	secondApp.envDrafts.portAvailable = func(int) bool { return true }
+	secondDraft, err := secondApp.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("second GenerateEnvDraft returned error: %v", err)
+	}
+	secondTarget := envDraftTargetByRelativePath(t, secondDraft, ".env")
+	secondPort := envDraftTargetValue(t, secondTarget, "PORT").Value
+	if secondPort != firstPort {
+		t.Fatalf("expected persisted port %q across app managers, got %q", firstPort, secondPort)
+	}
+	if got := envDraftTargetValue(t, secondTarget, "APP_URL").Value; got != "http://localhost:"+firstPort {
+		t.Fatalf("expected APP_URL to use persisted port %q, got %q", firstPort, got)
+	}
+}
+
 func TestSaveStructuredEnvDraftSavesAllTargetsByTargetIdentity(t *testing.T) {
 	repoPath := t.TempDir()
 	apiDir := filepath.Join(repoPath, "api")

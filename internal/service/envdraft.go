@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -21,9 +22,16 @@ type EnvDraftManager struct {
 	writeEnvTarget   func(path string, content []byte) error
 	generateSecret   func() (string, error)
 	portAvailable    func(port int) bool
+	portStore        EnvPortAssignmentStore
 	catalog          envcatalog.Catalog
 	generatedSecrets map[string]string
 	assignedPorts    map[string]int
+	loadedPortRepos  map[string]bool
+}
+
+type EnvPortAssignmentStore interface {
+	EnvPortAssignments(ctx context.Context, repoPath string) ([]domain.EnvPortAssignment, error)
+	SaveEnvPortAssignment(ctx context.Context, assignment domain.EnvPortAssignment) error
 }
 
 func NewEnvDraftManager() *EnvDraftManager {
@@ -34,6 +42,7 @@ func NewEnvDraftManager() *EnvDraftManager {
 		catalog:          envcatalog.DefaultCatalog(),
 		generatedSecrets: map[string]string{},
 		assignedPorts:    map[string]int{},
+		loadedPortRepos:  map[string]bool{},
 	}
 }
 
@@ -568,6 +577,7 @@ func (m *EnvDraftManager) assignedPort(repoPath, targetDir, purpose string, pref
 	if m.assignedPorts == nil {
 		m.assignedPorts = map[string]int{}
 	}
+	m.loadStoredPortAssignments(repoPath)
 	key := repoPath + "\x00" + targetDir + "\x00" + purpose
 	if port, ok := m.assignedPorts[key]; ok {
 		return port
@@ -579,7 +589,44 @@ func (m *EnvDraftManager) assignedPort(repoPath, targetDir, purpose string, pref
 		}
 	}
 	m.assignedPorts[key] = port
+	m.saveStoredPortAssignment(repoPath, targetDir, purpose, port)
 	return port
+}
+
+func (m *EnvDraftManager) loadStoredPortAssignments(repoPath string) {
+	if m.portStore == nil || strings.TrimSpace(repoPath) == "" {
+		return
+	}
+	if m.loadedPortRepos == nil {
+		m.loadedPortRepos = map[string]bool{}
+	}
+	if m.loadedPortRepos[repoPath] {
+		return
+	}
+	m.loadedPortRepos[repoPath] = true
+	assignments, err := m.portStore.EnvPortAssignments(context.Background(), repoPath)
+	if err != nil {
+		return
+	}
+	for _, assignment := range assignments {
+		if assignment.Port <= 0 {
+			continue
+		}
+		key := assignment.RepoPath + "\x00" + assignment.TargetDir + "\x00" + assignment.Purpose
+		m.assignedPorts[key] = assignment.Port
+	}
+}
+
+func (m *EnvDraftManager) saveStoredPortAssignment(repoPath, targetDir, purpose string, port int) {
+	if m.portStore == nil || strings.TrimSpace(repoPath) == "" || strings.TrimSpace(targetDir) == "" || strings.TrimSpace(purpose) == "" || port <= 0 {
+		return
+	}
+	_ = m.portStore.SaveEnvPortAssignment(context.Background(), domain.EnvPortAssignment{
+		RepoPath:  repoPath,
+		TargetDir: targetDir,
+		Purpose:   purpose,
+		Port:      port,
+	})
 }
 
 func (m *EnvDraftManager) repoPortAssigned(repoPath, currentKey string, port int) bool {

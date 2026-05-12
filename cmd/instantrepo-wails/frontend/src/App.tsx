@@ -5,6 +5,7 @@ import {
   ClearEnvContributionQueue,
   ExecuteStep,
   GenerateEnvDraft,
+  GetAIEnvReviewSettings,
   GetEnvContributionSettings,
   ImportRepository,
   InstalledRepoDetails,
@@ -17,6 +18,7 @@ import {
   RevealEnvVaultEntry,
   RevokeEnvVaultApproval,
   SaveEnvContributionSettings,
+  SaveAIEnvReviewSettings,
   SaveEnvDraft,
   SaveEnvVaultCredential,
   SuppressEnvVaultPrompt,
@@ -24,6 +26,7 @@ import {
 } from "./desktopApi";
 import type {
   ActivityEntry,
+  AIEnvReviewSettings,
   AnalyzeSnapshot,
   EnvDraft,
   EnvContributionSettings,
@@ -463,6 +466,8 @@ export default function App() {
   const [vaultPromptDisplayName, setVaultPromptDisplayName] = useState("");
   const [contributionSettings, setContributionSettings] =
     useState<EnvContributionSettingsResponse | null>(null);
+  const [aiEnvReviewSettings, setAIEnvReviewSettings] =
+    useState<AIEnvReviewSettings | null>(null);
   const [contributionLoading, setContributionLoading] = useState(false);
   const [consentPublicEnabled, setConsentPublicEnabled] = useState(true);
 
@@ -545,8 +550,12 @@ export default function App() {
   const loadContributionSettings = useCallback(async () => {
     setContributionLoading(true);
     try {
-      const response = await GetEnvContributionSettings();
+      const [response, aiResponse] = await Promise.all([
+        GetEnvContributionSettings(),
+        GetAIEnvReviewSettings(),
+      ]);
       setContributionSettings(response);
+      setAIEnvReviewSettings(aiResponse);
       setConsentPublicEnabled(response.settings.publicEnvPatternsEnabled);
     } catch (error) {
       const message = toErrorMessage(error);
@@ -1034,6 +1043,23 @@ export default function App() {
     }
   };
 
+  const handleSaveAIEnvReviewSettings = async (
+    settings: AIEnvReviewSettings,
+  ) => {
+    setContributionLoading(true);
+    try {
+      const response = await SaveAIEnvReviewSettings(settings);
+      setAIEnvReviewSettings(response);
+      appendActivity("success", "Settings Saved", "AI Env Review settings updated.");
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Settings Save Failed", message);
+    } finally {
+      setContributionLoading(false);
+    }
+  };
+
   const handleClearContributionQueue = async () => {
     setContributionLoading(true);
     try {
@@ -1263,10 +1289,14 @@ export default function App() {
         {activeView === "settings" ? (
           <SettingsView
             response={contributionSettings}
+            aiEnvReviewSettings={aiEnvReviewSettings}
             loading={contributionLoading}
             onRefresh={() => void loadContributionSettings()}
             onSaveSettings={(settings) =>
               void handleSaveContributionSettings(settings)
+            }
+            onSaveAIEnvReviewSettings={(settings) =>
+              void handleSaveAIEnvReviewSettings(settings)
             }
             onRecordConsent={(publicEnabled) =>
               void handleRecordContributionConsent(publicEnabled)

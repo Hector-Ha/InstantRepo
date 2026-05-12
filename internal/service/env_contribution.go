@@ -27,6 +27,9 @@ type EnvContributionStore interface {
 	EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettings, error)
 	SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) error
 	SaveEnvContributionQueueItem(ctx context.Context, item domain.EnvContributionQueueItem) (domain.EnvContributionQueueItem, error)
+	EnvContributionQueueItems(ctx context.Context, limit int) ([]domain.EnvContributionQueueItem, error)
+	MarkEnvContributionQueueAttempt(ctx context.Context, id int64, attemptedAt time.Time) error
+	DeleteEnvContributionQueueItem(ctx context.Context, id int64) error
 	EnvContributionQueueStatus(ctx context.Context) (domain.EnvContributionQueueStatus, error)
 	ClearEnvContributionQueue(ctx context.Context) error
 }
@@ -90,6 +93,7 @@ func (s *EnvContributionService) Settings(ctx context.Context) (domain.EnvContri
 	if s == nil || s.store == nil {
 		return domain.EnvContributionSettingsResponse{}, nil
 	}
+	_ = s.RetryQueue(ctx)
 	settings, err := s.store.EnvContributionSettings(ctx)
 	if err != nil {
 		return domain.EnvContributionSettingsResponse{}, err
@@ -236,6 +240,32 @@ func (s *EnvContributionService) sendOrQueue(ctx context.Context, payload domain
 		EventType:   payload.EventType,
 		PayloadJSON: raw,
 	})
+	return nil
+}
+
+func (s *EnvContributionService) RetryQueue(ctx context.Context) error {
+	if s == nil || s.store == nil || s.sender == nil {
+		return nil
+	}
+	items, err := s.store.EnvContributionQueueItems(ctx, 25)
+	if err != nil {
+		return err
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		var payload domain.EnvContributionPayload
+		if err := json.Unmarshal([]byte(item.PayloadJSON), &payload); err != nil {
+			_ = s.store.DeleteEnvContributionQueueItem(ctx, item.ID)
+			continue
+		}
+		if err := s.sender.SendEnvContribution(ctx, payload); err != nil {
+			_ = s.store.MarkEnvContributionQueueAttempt(ctx, item.ID, time.Now().UTC())
+			continue
+		}
+		if err := s.store.DeleteEnvContributionQueueItem(ctx, item.ID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
