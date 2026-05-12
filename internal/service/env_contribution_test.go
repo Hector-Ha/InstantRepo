@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -50,6 +52,58 @@ func TestEnvContributionRepoClassifierRequiresConfirmedPublicHTTPS(t *testing.T)
 		if got.Public || got.URL != "" {
 			t.Fatalf("expected private/uncertain repo for %q, got %+v", rawURL, got)
 		}
+	}
+}
+
+func TestGitPublicRepoCheckerDisablesCredentialPrompts(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "git.log")
+	writeFakeGit(t, dir)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INSTANTREPO_FAKE_GIT_LOG", logPath)
+
+	if !(gitPublicRepoChecker{}).IsPublicRepo(context.Background(), "https://github.com/owner/repo") {
+		raw, _ := os.ReadFile(logPath)
+		t.Fatalf("expected public check to run without credential prompts/helpers:\n%s", string(raw))
+	}
+}
+
+func writeFakeGit(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "git.bat")
+		script := `@echo off
+setlocal
+>>"%INSTANTREPO_FAKE_GIT_LOG%" echo args=%*
+>>"%INSTANTREPO_FAKE_GIT_LOG%" echo terminal=%GIT_TERMINAL_PROMPT%
+>>"%INSTANTREPO_FAKE_GIT_LOG%" echo gcm=%GCM_INTERACTIVE%
+echo %* | findstr /C:"credential.helper=" >nul || exit /b 7
+if not "%GIT_TERMINAL_PROMPT%"=="0" exit /b 8
+if /I not "%GCM_INTERACTIVE%"=="never" exit /b 9
+exit /b 0
+`
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake git: %v", err)
+		}
+		return
+	}
+	path := filepath.Join(dir, "git")
+	script := `#!/bin/sh
+{
+  printf 'args=%s\n' "$*"
+  printf 'terminal=%s\n' "$GIT_TERMINAL_PROMPT"
+  printf 'gcm=%s\n' "$GCM_INTERACTIVE"
+} >> "$INSTANTREPO_FAKE_GIT_LOG"
+case " $* " in
+  *" credential.helper= "*) ;;
+  *) exit 7 ;;
+esac
+[ "$GIT_TERMINAL_PROMPT" = "0" ] || exit 8
+[ "$GCM_INTERACTIVE" = "never" ] || exit 9
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
 	}
 }
 

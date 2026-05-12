@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -468,7 +469,18 @@ type gitPublicRepoChecker struct{}
 func (gitPublicRepoChecker) IsPublicRepo(ctx context.Context, normalizedURL string) bool {
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	err := exec.CommandContext(runCtx, "git", "ls-remote", "--exit-code", normalizedURL, "HEAD").Run()
+	cmd := exec.CommandContext(runCtx, "git",
+		"-c", "credential.helper=",
+		"-c", "core.askPass=",
+		"ls-remote", "--exit-code", normalizedURL, "HEAD",
+	)
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+		"GCM_INTERACTIVE=never",
+	)
+	err := cmd.Run()
 	return err == nil
 }
 
