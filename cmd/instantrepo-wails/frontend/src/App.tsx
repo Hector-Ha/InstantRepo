@@ -1,18 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnalyzeRepository,
+  ApproveEnvVaultEntry,
   ExecuteStep,
   GenerateEnvDraft,
   ImportRepository,
   InstalledRepoDetails,
+  ListEnvVaultEntries,
   ListInstalledRepos,
+  MarkEnvVaultEntryStatus,
   OpenDirectory,
+  RemoveEnvVaultEntry,
+  RevealEnvVaultEntry,
+  RevokeEnvVaultApproval,
   SaveEnvDraft,
+  SaveEnvVaultCredential,
+  SuppressEnvVaultPrompt,
+  UpdateEnvVaultEntry,
 } from "./desktopApi";
 import type {
   ActivityEntry,
   AnalyzeSnapshot,
   EnvDraft,
+  EnvVaultApprovalRequest,
+  EnvVaultManagerEntry,
+  EnvVaultPromptCandidate,
+  EnvVaultStatus,
   ExecuteResponse,
   ExecutionStep,
   InstalledRepoDetailsResponse,
@@ -22,6 +35,8 @@ import type {
 } from "./types";
 import { AppNav, type AppView } from "./AppNav";
 import { EnvDraftPanel } from "./EnvDraftPanel";
+import { EnvVaultManager } from "./EnvVaultManager";
+import { EnvVaultPrompt } from "./EnvVaultPrompt";
 import { redactLikelySecrets } from "./redaction";
 import { getMissingRequiredTools, getSafetyAttention } from "./attention";
 import {
@@ -75,6 +90,19 @@ function buildEnvDraft(snapshot: AnalyzeSnapshot): EnvDraft {
       },
     ],
   };
+}
+
+function vaultPromptValue(
+  draft: EnvDraft | null,
+  candidate: EnvVaultPromptCandidate,
+) {
+  const target = draft?.targets.find(
+    (item) => item.relativePath === candidate.targetRelativePath,
+  );
+  return (
+    target?.values.find((item) => item.name === candidate.variableName)?.value ??
+    ""
+  );
 }
 
 function confidenceLabel(value: number) {
@@ -417,6 +445,15 @@ export default function App() {
   >(null);
   const [selectedRepoDetails, setSelectedRepoDetails] =
     useState<InstalledRepoDetailsResponse | null>(null);
+  const [vaultEntries, setVaultEntries] = useState<EnvVaultManagerEntry[]>([]);
+  const [vaultLoading, setVaultLoading] = useState(false);
+  const [revealedVaultValues, setRevealedVaultValues] = useState<
+    Record<number, string>
+  >({});
+  const [vaultPromptCandidates, setVaultPromptCandidates] = useState<
+    EnvVaultPromptCandidate[]
+  >([]);
+  const [vaultPromptDisplayName, setVaultPromptDisplayName] = useState("");
 
   const selectedStep = useMemo(
     () =>
@@ -480,9 +517,29 @@ export default function App() {
     }
   }, [appendActivity]);
 
+  const loadVaultEntries = useCallback(async () => {
+    setVaultLoading(true);
+    try {
+      const response = await ListEnvVaultEntries();
+      setVaultEntries(response.entries ?? []);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Load Failed", message);
+    } finally {
+      setVaultLoading(false);
+    }
+  }, [appendActivity]);
+
   useEffect(() => {
     void loadInstalledRepos();
   }, [loadInstalledRepos]);
+
+  useEffect(() => {
+    if (activeView === "vault") {
+      void loadVaultEntries();
+    }
+  }, [activeView, loadVaultEntries]);
 
   const syncSnapshot = (nextSnapshot: AnalyzeSnapshot, nextEnvDraft?: EnvDraft) => {
     setSnapshot(nextSnapshot);
@@ -688,6 +745,16 @@ export default function App() {
         response.result.stdout.trim() ||
           `Saved ${snapshot.plan.env.targetPath ?? ".env"}.`,
       );
+      const candidates = response.vaultPromptCandidates ?? [];
+      setVaultPromptCandidates(candidates);
+      setVaultPromptDisplayName("");
+      if (candidates.length > 0) {
+        appendActivity(
+          "info",
+          "Vault Prompt Ready",
+          `${candidates.length} saved credential prompt${candidates.length === 1 ? "" : "s"} ready.`,
+        );
+      }
       void loadInstalledRepos();
     } catch (error) {
       const message = toErrorMessage(error);
@@ -695,6 +762,213 @@ export default function App() {
       appendActivity("critical", "Save Failed", message);
     } finally {
       setBusyLabel(null);
+    }
+  };
+
+  const handleVaultReveal = async (entry: EnvVaultManagerEntry) => {
+    if (!window.confirm(`Reveal ${entry.displayName} temporarily?`)) {
+      return;
+    }
+    try {
+      const response = await RevealEnvVaultEntry({
+        entryId: entry.id,
+        confirmed: true,
+      });
+      setRevealedVaultValues((current) => ({
+        ...current,
+        [entry.id]: response.value,
+      }));
+      const revealUntil = new Date(response.revealUntil).getTime();
+      const delay = Number.isFinite(revealUntil)
+        ? Math.max(1000, revealUntil - Date.now())
+        : 30000;
+      window.setTimeout(() => {
+        setRevealedVaultValues((current) => {
+          const next = { ...current };
+          delete next[entry.id];
+          return next;
+        });
+      }, delay);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Reveal Failed", message);
+    }
+  };
+
+  const handleVaultRename = async (
+    entry: EnvVaultManagerEntry,
+    displayName: string,
+  ) => {
+    try {
+      const response = await UpdateEnvVaultEntry({
+        entryId: entry.id,
+        displayName,
+      });
+      appendActivity(
+        response.needsReview ? "warning" : "success",
+        response.needsReview ? "Vault Review" : "Vault Updated",
+        response.reviewMessage ?? `Updated ${entry.variableName}.`,
+      );
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Update Failed", message);
+    }
+  };
+
+  const handleVaultUpdateValue = async (
+    entry: EnvVaultManagerEntry,
+    value: string,
+  ) => {
+    try {
+      const response = await UpdateEnvVaultEntry({
+        entryId: entry.id,
+        displayName: entry.displayName,
+        updateValue: true,
+        value,
+      });
+      appendActivity(
+        response.needsReview ? "warning" : "success",
+        response.needsReview ? "Vault Review" : "Vault Updated",
+        response.reviewMessage ?? `Updated ${entry.variableName}.`,
+      );
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Update Failed", message);
+    }
+  };
+
+  const handleVaultRemove = async (entry: EnvVaultManagerEntry) => {
+    if (!window.confirm(`Remove ${entry.displayName} from Env Vault?`)) {
+      return;
+    }
+    try {
+      await RemoveEnvVaultEntry(entry.id);
+      setRevealedVaultValues((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
+      appendActivity("success", "Vault Removed", `Removed ${entry.variableName}.`);
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Remove Failed", message);
+    }
+  };
+
+  const handleVaultStatusChange = async (
+    entry: EnvVaultManagerEntry,
+    status: EnvVaultStatus,
+  ) => {
+    try {
+      await MarkEnvVaultEntryStatus(entry.id, status);
+      appendActivity("success", "Vault Status Updated", `${entry.variableName} is ${status}.`);
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Status Failed", message);
+    }
+  };
+
+  const handleVaultApprove = async (
+    _entry: EnvVaultManagerEntry,
+    approval: EnvVaultApprovalRequest,
+  ) => {
+    try {
+      await ApproveEnvVaultEntry(approval);
+      appendActivity("success", "Vault Approved", `${approval.variableName} approval saved.`);
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Approval Failed", message);
+    }
+  };
+
+  const handleVaultRevokeApproval = async (
+    entry: EnvVaultManagerEntry,
+    approvalID: number,
+  ) => {
+    try {
+      await RevokeEnvVaultApproval(approvalID);
+      appendActivity("success", "Vault Approval Revoked", `${entry.variableName} approval revoked.`);
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Approval Failed", message);
+    }
+  };
+
+  const dismissVaultPrompt = () => {
+    setVaultPromptCandidates((current) => current.slice(1));
+    setVaultPromptDisplayName("");
+  };
+
+  const handleSaveVaultPrompt = async () => {
+    const candidate = vaultPromptCandidates[0];
+    if (!candidate) {
+      return;
+    }
+    const value = vaultPromptValue(envDraft, candidate);
+    if (!value.trim()) {
+      appendActivity(
+        "warning",
+        "Vault Prompt Skipped",
+        `${candidate.variableName} no longer has a value to save.`,
+      );
+      dismissVaultPrompt();
+      return;
+    }
+    try {
+      const response = await SaveEnvVaultCredential({
+        provider: candidate.provider,
+        variableName: candidate.variableName,
+        displayName: vaultPromptDisplayName,
+        value,
+      });
+      appendActivity(
+        response.needsReview ? "warning" : "success",
+        response.needsReview ? "Vault Review" : "Vault Saved",
+        response.reviewMessage ?? `${candidate.variableName} saved to Env Vault.`,
+      );
+      dismissVaultPrompt();
+      await loadVaultEntries();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Save Failed", message);
+    }
+  };
+
+  const handleSuppressVaultPrompt = async () => {
+    const candidate = vaultPromptCandidates[0];
+    if (!candidate) {
+      return;
+    }
+    try {
+      await SuppressEnvVaultPrompt({
+        repoPath: candidate.repoPath,
+        targetRelativePath: candidate.targetRelativePath,
+        variableName: candidate.variableName,
+      });
+      appendActivity(
+        "info",
+        "Vault Prompt Hidden",
+        `${candidate.variableName} will not ask again for this repo target.`,
+      );
+      dismissVaultPrompt();
+    } catch (error) {
+      const message = toErrorMessage(error);
+      setErrorMessage(message);
+      appendActivity("critical", "Vault Prompt Failed", message);
     }
   };
 
@@ -884,18 +1158,29 @@ export default function App() {
         ) : null}
 
         {activeView === "vault" ? (
-          <section className="card" aria-labelledby="section-vault">
-            <div className="section-heading">
-              <div>
-                <h2 id="section-vault">Env Vault</h2>
-                <p>Credential storage and approvals land in the next slice.</p>
-              </div>
-            </div>
-            <div className="empty-state">
-              <div className="empty-state-icon">◇</div>
-              <p>Vault-backed draft tags are shown in Env Draft rows when present.</p>
-            </div>
-          </section>
+          <EnvVaultManager
+            entries={vaultEntries}
+            loading={vaultLoading}
+            revealedValues={revealedVaultValues}
+            onRefresh={() => void loadVaultEntries()}
+            onReveal={(entry) => void handleVaultReveal(entry)}
+            onRename={(entry, displayName) =>
+              void handleVaultRename(entry, displayName)
+            }
+            onUpdateValue={(entry, value) =>
+              void handleVaultUpdateValue(entry, value)
+            }
+            onRemove={(entry) => void handleVaultRemove(entry)}
+            onStatusChange={(entry, status) =>
+              void handleVaultStatusChange(entry, status)
+            }
+            onApprove={(entry, approval) =>
+              void handleVaultApprove(entry, approval)
+            }
+            onRevokeApproval={(entry, approvalID) =>
+              void handleVaultRevokeApproval(entry, approvalID)
+            }
+          />
         ) : null}
 
         {activeView === "settings" ? (
@@ -1287,6 +1572,17 @@ export default function App() {
           </div>
         </section>
           </>
+        ) : null}
+
+        {vaultPromptCandidates[0] ? (
+          <EnvVaultPrompt
+            candidate={vaultPromptCandidates[0]}
+            displayName={vaultPromptDisplayName}
+            onDisplayNameChange={setVaultPromptDisplayName}
+            onSave={() => void handleSaveVaultPrompt()}
+            onDismiss={dismissVaultPrompt}
+            onSuppress={() => void handleSuppressVaultPrompt()}
+          />
         ) : null}
       </main>
     </div>

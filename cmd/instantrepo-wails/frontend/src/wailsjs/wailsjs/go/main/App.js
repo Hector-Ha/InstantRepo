@@ -34,6 +34,10 @@ export function InstalledRepoDetails(arg1) {
   return window['go']['main']['App']['InstalledRepoDetails'](arg1);
 }
 
+export function ListEnvVaultEntries() {
+  return window['go']['main']['App']['ListEnvVaultEntries']();
+}
+
 export function ListInstalledRepos() {
   return window['go']['main']['App']['ListInstalledRepos']();
 }
@@ -44,6 +48,18 @@ export function MarkEnvVaultEntryStatus(arg1, arg2) {
 
 export function OpenDirectory() {
   return window['go']['main']['App']['OpenDirectory']();
+}
+
+export function RemoveEnvVaultEntry(arg1) {
+  return window['go']['main']['App']['RemoveEnvVaultEntry'](arg1);
+}
+
+export function RevealEnvVaultEntry(arg1) {
+  return window['go']['main']['App']['RevealEnvVaultEntry'](arg1);
+}
+
+export function RevokeEnvVaultApproval(arg1) {
+  return window['go']['main']['App']['RevokeEnvVaultApproval'](arg1);
 }
 
 export function SaveEnvDraft(arg1, arg2) {
@@ -64,4 +80,8 @@ export function ShellInfo() {
 
 export function SuppressEnvVaultPrompt(arg1) {
   return window['go']['main']['App']['SuppressEnvVaultPrompt'](arg1);
+}
+
+export function UpdateEnvVaultEntry(arg1) {
+  return window['go']['main']['App']['UpdateEnvVaultEntry'](arg1);
 }

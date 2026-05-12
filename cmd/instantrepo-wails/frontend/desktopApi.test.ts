@@ -16,6 +16,12 @@ test("desktop API calls Wails bridge when it exists", async () => {
         App: {
           ListInstalledRepos: async () => ({ repos: [] }),
           GenerateEnvDraft: async () => ({ repoPath: "C:\\repo", targets: [] }),
+          ListEnvVaultEntries: async () => ({ entries: [] }),
+          RevealEnvVaultEntry: async () => ({
+            entryId: 1,
+            value: "sk-test",
+            revealUntil: "2026-01-01T00:00:00Z",
+          }),
         },
       },
     },
@@ -26,4 +32,8 @@ test("desktop API calls Wails bridge when it exists", async () => {
     repoPath: "C:\\repo",
     targets: [],
   });
+  await expect(api.ListEnvVaultEntries()).resolves.toEqual({ entries: [] });
+  await expect(
+    api.RevealEnvVaultEntry({ entryId: 1, confirmed: true }),
+  ).resolves.toMatchObject({ entryId: 1, value: "sk-test" });
 });

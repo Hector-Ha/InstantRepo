@@ -99,6 +99,94 @@ export interface EnvVaultPromptSuppression {
   variableName: string;
 }
 
+export type EnvVaultStatus =
+  | "ready"
+  | "needs_review"
+  | "action_needed"
+  | "invalid";
+
+export interface EnvVaultEntry {
+  id: number;
+  provider: string;
+  variableName: string;
+  displayName: string;
+  fingerprintFragment: string;
+  status: EnvVaultStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnvVaultApproval {
+  id: number;
+  entryId: number;
+  repoPath: string;
+  targetRelativePath: string;
+  variableName: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnvVaultApprovalRequest {
+  entryId: number;
+  repoPath: string;
+  targetRelativePath: string;
+  variableName: string;
+}
+
+export interface EnvVaultUsageLocation {
+  repoPath: string;
+  targetRelativePath: string;
+  variableName: string;
+  lastUsedAt: string;
+  useCount: number;
+}
+
+export interface EnvVaultUsageSummary {
+  totalUseCount: number;
+  locations: EnvVaultUsageLocation[];
+}
+
+export interface EnvVaultManagerEntry extends EnvVaultEntry {
+  usage: EnvVaultUsageSummary;
+  approvals: EnvVaultApproval[];
+}
+
+export interface EnvVaultManagerResponse {
+  entries: EnvVaultManagerEntry[];
+}
+
+export interface EnvVaultSaveRequest {
+  provider: string;
+  variableName: string;
+  displayName?: string;
+  value: string;
+}
+
+export interface EnvVaultSaveResponse {
+  entry?: EnvVaultEntry;
+  needsReview: boolean;
+  reviewMessage?: string;
+}
+
+export interface EnvVaultUpdateRequest {
+  entryId: number;
+  displayName?: string;
+  updateValue?: boolean;
+  value?: string;
+}
+
+export interface EnvVaultRevealRequest {
+  entryId: number;
+  confirmed: boolean;
+}
+
+export interface EnvVaultRevealResponse {
+  entryId: number;
+  value: string;
+  revealUntil: string;
+}
+
 export interface EnvDraftTarget {
   relativePath: string;
   absolutePath: string;

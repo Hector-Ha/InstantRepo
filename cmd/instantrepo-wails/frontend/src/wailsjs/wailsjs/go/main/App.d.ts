@@ -18,11 +18,19 @@ export function ImportRepository(arg1:string,arg2:string):Promise<domain.Analyze
 
 export function InstalledRepoDetails(arg1:number):Promise<domain.InstalledRepoDetailsResponse>;
 
+export function ListEnvVaultEntries():Promise<domain.EnvVaultManagerResponse>;
+
 export function ListInstalledRepos():Promise<domain.InstalledRepoManagerResponse>;
 
 export function MarkEnvVaultEntryStatus(arg1:number,arg2:string):Promise<void>;
 
 export function OpenDirectory():Promise<string>;
+
+export function RemoveEnvVaultEntry(arg1:number):Promise<void>;
+
+export function RevealEnvVaultEntry(arg1:domain.EnvVaultRevealRequest):Promise<domain.EnvVaultRevealResponse>;
+
+export function RevokeEnvVaultApproval(arg1:number):Promise<void>;
 
 export function SaveEnvDraft(arg1:string,arg2:domain.EnvDraft):Promise<domain.ExecuteResponse>;
 
@@ -33,3 +41,5 @@ export function SaveEnvVaultCredential(arg1:domain.EnvVaultSaveRequest):Promise<
 export function ShellInfo():Promise<Record<string, string>>;
 
 export function SuppressEnvVaultPrompt(arg1:domain.EnvVaultPromptSuppression):Promise<void>;
+
+export function UpdateEnvVaultEntry(arg1:domain.EnvVaultUpdateRequest):Promise<domain.EnvVaultSaveResponse>;

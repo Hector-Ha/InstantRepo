@@ -486,6 +486,28 @@ RETURNING id, provider, variable_name, display_name, credential_key, fingerprint
 	return saved, nil
 }
 
+func (s *SQLiteStore) UpdateEnvVaultEntryDisplayName(ctx context.Context, entryID int64, displayName string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE env_vault_entries
+SET display_name = ?, updated_at = ?
+WHERE id = ?;
+`, displayName, formatTime(time.Now().UTC()), entryID); err != nil {
+		return fmt.Errorf("update env vault display name: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) UpdateEnvVaultEntryCredentialMetadata(ctx context.Context, entryID int64, fingerprint, fingerprintFragment, status string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE env_vault_entries
+SET fingerprint_sha256 = ?, fingerprint_fragment = ?, status = ?, updated_at = ?
+WHERE id = ?;
+`, fingerprint, fingerprintFragment, status, formatTime(time.Now().UTC()), entryID); err != nil {
+		return fmt.Errorf("update env vault credential metadata: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) UpdateEnvVaultEntryCredentialKey(ctx context.Context, entryID int64, credentialKey string) error {
 	if _, err := s.db.ExecContext(ctx, `
 UPDATE env_vault_entries
@@ -498,10 +520,49 @@ WHERE id = ?;
 }
 
 func (s *SQLiteStore) DeleteEnvVaultEntry(ctx context.Context, entryID int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM env_vault_entries WHERE id = ?;`, entryID); err != nil {
-		return fmt.Errorf("delete env vault entry: %w", err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin env vault delete: %w", err)
+	}
+	for _, stmt := range []string{
+		`DELETE FROM env_vault_approvals WHERE entry_id = ?;`,
+		`DELETE FROM env_vault_use_records WHERE entry_id = ?;`,
+		`DELETE FROM env_vault_entries WHERE id = ?;`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, entryID); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("delete env vault entry: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit env vault delete: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) EnvVaultEntries(ctx context.Context) ([]domain.EnvVaultEntryMetadata, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, provider, variable_name, display_name, credential_key, fingerprint_sha256, fingerprint_fragment, status, created_at, updated_at
+FROM env_vault_entries
+ORDER BY provider ASC, variable_name ASC, display_name ASC, id ASC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query env vault entries: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []domain.EnvVaultEntryMetadata
+	for rows.Next() {
+		entry, err := scanEnvVaultEntry(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan env vault entry: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read env vault entries: %w", err)
+	}
+	return entries, nil
 }
 
 func (s *SQLiteStore) EnvVaultEntryByID(ctx context.Context, entryID int64) (domain.EnvVaultEntryMetadata, error) {
@@ -568,6 +629,43 @@ DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at;
 	)
 	if err != nil {
 		return fmt.Errorf("save env vault approval: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) EnvVaultApprovals(ctx context.Context, entryID int64) ([]domain.EnvVaultApproval, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, entry_id, repo_path, target_relative_path, variable_name, status, created_at, updated_at
+FROM env_vault_approvals
+WHERE entry_id = ?
+ORDER BY updated_at DESC, id DESC;
+`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("query env vault approvals: %w", err)
+	}
+	defer rows.Close()
+
+	var approvals []domain.EnvVaultApproval
+	for rows.Next() {
+		approval, err := scanEnvVaultApproval(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan env vault approval: %w", err)
+		}
+		approvals = append(approvals, approval)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read env vault approvals: %w", err)
+	}
+	return approvals, nil
+}
+
+func (s *SQLiteStore) RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE env_vault_approvals
+SET status = ?, updated_at = ?
+WHERE id = ?;
+`, domain.EnvVaultApprovalStatusRevoked, formatTime(time.Now().UTC()), approvalID); err != nil {
+		return fmt.Errorf("revoke env vault approval: %w", err)
 	}
 	return nil
 }
@@ -979,6 +1077,10 @@ type envVaultEntryScanner interface {
 	Scan(dest ...any) error
 }
 
+type envVaultApprovalScanner interface {
+	Scan(dest ...any) error
+}
+
 type envVaultUseRecordScanner interface {
 	Scan(dest ...any) error
 }
@@ -1145,6 +1247,32 @@ func scanEnvVaultEntry(row envVaultEntryScanner) (domain.EnvVaultEntryMetadata, 
 		return domain.EnvVaultEntryMetadata{}, fmt.Errorf("parse env vault entry updated_at: %w", err)
 	}
 	return entry, nil
+}
+
+func scanEnvVaultApproval(row envVaultApprovalScanner) (domain.EnvVaultApproval, error) {
+	var approval domain.EnvVaultApproval
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&approval.ID,
+		&approval.EntryID,
+		&approval.RepoPath,
+		&approval.TargetRelativePath,
+		&approval.VariableName,
+		&approval.Status,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return domain.EnvVaultApproval{}, err
+	}
+	var err error
+	if approval.CreatedAt, err = parseTime(createdAt); err != nil {
+		return domain.EnvVaultApproval{}, fmt.Errorf("parse env vault approval created_at: %w", err)
+	}
+	if approval.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return domain.EnvVaultApproval{}, fmt.Errorf("parse env vault approval updated_at: %w", err)
+	}
+	return approval, nil
 }
 
 func scanEnvVaultUseRecord(row envVaultUseRecordScanner) (domain.EnvVaultUseRecord, error) {

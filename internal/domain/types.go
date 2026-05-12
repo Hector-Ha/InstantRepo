@@ -475,6 +475,47 @@ type EnvVaultSaveResponse struct {
 	ReviewMessage string        `json:"reviewMessage,omitempty"`
 }
 
+type EnvVaultUpdateRequest struct {
+	EntryID     int64  `json:"entryId"`
+	DisplayName string `json:"displayName,omitempty"`
+	UpdateValue bool   `json:"updateValue,omitempty"`
+	Value       string `json:"value,omitempty"`
+}
+
+type EnvVaultManagerResponse struct {
+	Entries []EnvVaultManagerEntry `json:"entries"`
+}
+
+type EnvVaultManagerEntry struct {
+	EnvVaultEntry
+	Usage     EnvVaultUsageSummary `json:"usage"`
+	Approvals []EnvVaultApproval   `json:"approvals"`
+}
+
+type EnvVaultUsageSummary struct {
+	TotalUseCount int                     `json:"totalUseCount"`
+	Locations     []EnvVaultUsageLocation `json:"locations"`
+}
+
+type EnvVaultUsageLocation struct {
+	RepoPath           string    `json:"repoPath"`
+	TargetRelativePath string    `json:"targetRelativePath"`
+	VariableName       string    `json:"variableName"`
+	LastUsedAt         time.Time `json:"lastUsedAt"`
+	UseCount           int       `json:"useCount"`
+}
+
+type EnvVaultRevealRequest struct {
+	EntryID   int64 `json:"entryId"`
+	Confirmed bool  `json:"confirmed"`
+}
+
+type EnvVaultRevealResponse struct {
+	EntryID     int64     `json:"entryId"`
+	Value       string    `json:"value"`
+	RevealUntil time.Time `json:"revealUntil"`
+}
+
 type EnvVaultEntry struct {
 	ID                  int64     `json:"id"`
 	Provider            string    `json:"provider"`
@@ -502,6 +543,11 @@ type EnvVaultApproval struct {
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
 }
+
+const (
+	EnvVaultApprovalStatusApproved = "approved"
+	EnvVaultApprovalStatusRevoked  = "revoked"
+)
 
 type EnvVaultUseRecord struct {
 	ID                 int64     `json:"id"`

@@ -125,6 +125,272 @@ func TestEnvVaultSupportsMultipleNamedValuesAndFallbackName(t *testing.T) {
 	}
 }
 
+func TestEnvVaultManagerListReturnsValueFreeUsageAndApprovals(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	repoPath := t.TempDir()
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-manager-secret-value")
+	if err := app.ApproveEnvVaultEntry(ctx, domain.EnvVaultApproval{
+		EntryID:            entry.ID,
+		RepoPath:           repoPath,
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("ApproveEnvVaultEntry returned error: %v", err)
+	}
+	for range 2 {
+		if err := sqliteStore.RecordEnvVaultUse(ctx, domain.EnvVaultUseRecord{
+			EntryID:            entry.ID,
+			RepoPath:           repoPath,
+			TargetRelativePath: ".env",
+			VariableName:       "OPENAI_API_KEY",
+		}); err != nil {
+			t.Fatalf("RecordEnvVaultUse returned error: %v", err)
+		}
+	}
+
+	resp, err := app.ListEnvVaultEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListEnvVaultEntries returned error: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one manager entry, got %+v", resp.Entries)
+	}
+	got := resp.Entries[0]
+	if got.ID != entry.ID || got.Provider != "openai" || got.VariableName != "OPENAI_API_KEY" || got.Status != domain.EnvVaultStatusReady {
+		t.Fatalf("expected entry metadata, got %+v", got)
+	}
+	if got.Usage.TotalUseCount != 2 || len(got.Usage.Locations) != 1 {
+		t.Fatalf("expected summarized usage, got %+v", got.Usage)
+	}
+	if got.Usage.Locations[0].RepoPath != repoPath || got.Usage.Locations[0].TargetRelativePath != ".env" {
+		t.Fatalf("expected value-free usage location, got %+v", got.Usage.Locations[0])
+	}
+	if len(got.Approvals) != 1 || got.Approvals[0].Status != "approved" {
+		t.Fatalf("expected approval summary, got %+v", got.Approvals)
+	}
+	rawJSON, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal manager response: %v", err)
+	}
+	for _, forbidden := range []string{"sk-manager-secret-value", credentialsKeyForEntry(entry.ID)} {
+		if strings.Contains(string(rawJSON), forbidden) {
+			t.Fatalf("expected manager response to omit %q, got:\n%s", forbidden, string(rawJSON))
+		}
+	}
+}
+
+func TestEnvVaultRevealRequiresConfirmation(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-reveal-secret-value")
+
+	if _, err := app.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID: entry.ID,
+	}); err == nil {
+		t.Fatalf("expected reveal without confirmation to fail")
+	}
+
+	resp, err := app.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID:   entry.ID,
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("RevealEnvVaultEntry returned error: %v", err)
+	}
+	if resp.EntryID != entry.ID || resp.Value != "sk-reveal-secret-value" {
+		t.Fatalf("expected gated reveal response, got %+v", resp)
+	}
+	if resp.RevealUntil.IsZero() {
+		t.Fatalf("expected temporary reveal deadline")
+	}
+}
+
+func TestEnvVaultUpdateChangesDisplayNameAndCredentialValue(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	credentials := newFakeCredentialStore()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, credentials)
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-old-secret-value")
+
+	resp, err := app.UpdateEnvVaultEntry(ctx, domain.EnvVaultUpdateRequest{
+		EntryID:     entry.ID,
+		DisplayName: "renamed key",
+		UpdateValue: true,
+		Value:       "sk-new-secret-value",
+	})
+	if err != nil {
+		t.Fatalf("UpdateEnvVaultEntry returned error: %v", err)
+	}
+	if resp.NeedsReview {
+		t.Fatalf("expected update without review, got %+v", resp)
+	}
+	if resp.Entry.DisplayName != "renamed key" || resp.Entry.FingerprintFragment != fingerprintCredential("sk-new-secret-value")[:12] {
+		t.Fatalf("expected updated entry metadata, got %+v", resp.Entry)
+	}
+	reveal, err := app.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID:   entry.ID,
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("RevealEnvVaultEntry returned error after update: %v", err)
+	}
+	if reveal.Value != "sk-new-secret-value" {
+		t.Fatalf("expected updated credential value, got %q", reveal.Value)
+	}
+}
+
+func TestEnvVaultUpdateDuplicateValueUsesNeutralReview(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	existing := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-existing-secret-value")
+	target := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-target-secret-value")
+
+	resp, err := app.UpdateEnvVaultEntry(ctx, domain.EnvVaultUpdateRequest{
+		EntryID:     target.ID,
+		DisplayName: "target",
+		UpdateValue: true,
+		Value:       "sk-existing-secret-value",
+	})
+	if err != nil {
+		t.Fatalf("UpdateEnvVaultEntry returned error: %v", err)
+	}
+	if !resp.NeedsReview || resp.ReviewMessage != domain.EnvVaultDuplicateReviewMessage {
+		t.Fatalf("expected neutral review response, got %+v", resp)
+	}
+	if resp.Entry.ID != existing.ID {
+		t.Fatalf("expected existing entry in review response, got %+v", resp.Entry)
+	}
+}
+
+func TestEnvVaultRemoveDeletesCredentialMetadataUsageAndApprovals(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	credentials := newFakeCredentialStore()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, credentials)
+	repoPath := t.TempDir()
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-remove-secret-value")
+	if err := app.ApproveEnvVaultEntry(ctx, domain.EnvVaultApproval{
+		EntryID:            entry.ID,
+		RepoPath:           repoPath,
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("ApproveEnvVaultEntry returned error: %v", err)
+	}
+	if err := sqliteStore.RecordEnvVaultUse(ctx, domain.EnvVaultUseRecord{
+		EntryID:            entry.ID,
+		RepoPath:           repoPath,
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("RecordEnvVaultUse returned error: %v", err)
+	}
+
+	if err := app.RemoveEnvVaultEntry(ctx, entry.ID); err != nil {
+		t.Fatalf("RemoveEnvVaultEntry returned error: %v", err)
+	}
+	if _, ok := credentials.values[credentialsKeyForEntry(entry.ID)]; ok {
+		t.Fatalf("expected OS credential value to be deleted")
+	}
+	list, err := app.ListEnvVaultEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListEnvVaultEntries returned error: %v", err)
+	}
+	if len(list.Entries) != 0 {
+		t.Fatalf("expected removed entry to disappear, got %+v", list.Entries)
+	}
+}
+
+func TestEnvVaultRevokedApprovalStopsDraftAutoBinding(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("OPENAI_API_KEY=\n"), 0o644); err != nil {
+		t.Fatalf("write env template: %v", err)
+	}
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-approved-secret-value")
+	if err := app.ApproveEnvVaultEntry(ctx, domain.EnvVaultApproval{
+		EntryID:            entry.ID,
+		RepoPath:           repoPath,
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("ApproveEnvVaultEntry returned error: %v", err)
+	}
+	list, err := app.ListEnvVaultEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListEnvVaultEntries returned error: %v", err)
+	}
+	if len(list.Entries) != 1 || len(list.Entries[0].Approvals) != 1 {
+		t.Fatalf("expected approval in manager list, got %+v", list)
+	}
+	if err := app.RevokeEnvVaultApproval(ctx, list.Entries[0].Approvals[0].ID); err != nil {
+		t.Fatalf("RevokeEnvVaultApproval returned error: %v", err)
+	}
+
+	draft, err := app.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft returned error: %v", err)
+	}
+	value := envDraftTargetValue(t, envDraftTargetByRelativePath(t, draft, ".env"), "OPENAI_API_KEY")
+	if value.VaultBinding != nil {
+		t.Fatalf("expected revoked approval to stop auto-binding, got %+v", value)
+	}
+}
+
+func TestEnvVaultInvalidStatusSuppressesAutoBindingUntilReady(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, ".env.example"), []byte("OPENAI_API_KEY=\n"), 0o644); err != nil {
+		t.Fatalf("write env template: %v", err)
+	}
+	entry := saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-status-secret-value")
+	if err := app.ApproveEnvVaultEntry(ctx, domain.EnvVaultApproval{
+		EntryID:            entry.ID,
+		RepoPath:           repoPath,
+		TargetRelativePath: ".env",
+		VariableName:       "OPENAI_API_KEY",
+	}); err != nil {
+		t.Fatalf("ApproveEnvVaultEntry returned error: %v", err)
+	}
+	if err := app.MarkEnvVaultEntryStatus(ctx, entry.ID, domain.EnvVaultStatusInvalid); err != nil {
+		t.Fatalf("MarkEnvVaultEntryStatus invalid returned error: %v", err)
+	}
+	draft, err := app.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft returned error: %v", err)
+	}
+	value := envDraftTargetValue(t, envDraftTargetByRelativePath(t, draft, ".env"), "OPENAI_API_KEY")
+	if value.VaultBinding != nil {
+		t.Fatalf("expected invalid entry not to bind, got %+v", value)
+	}
+	if err := app.MarkEnvVaultEntryStatus(ctx, entry.ID, domain.EnvVaultStatusReady); err != nil {
+		t.Fatalf("MarkEnvVaultEntryStatus ready returned error: %v", err)
+	}
+	draft, err = app.GenerateEnvDraft(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("GenerateEnvDraft after ready returned error: %v", err)
+	}
+	value = envDraftTargetValue(t, envDraftTargetByRelativePath(t, draft, ".env"), "OPENAI_API_KEY")
+	if value.VaultBinding == nil || value.VaultBinding.EntryID != entry.ID {
+		t.Fatalf("expected ready entry to bind after user action, got %+v", value)
+	}
+}
+
 func TestGenerateEnvDraftBindsApprovedReadyVaultEntryOnlyForBlankServiceCredential(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore := openServiceTestSQLiteStore(t)

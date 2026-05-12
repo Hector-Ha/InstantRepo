@@ -2,6 +2,13 @@ import type { ClonePreflightResponse } from "./clonePreflight";
 import type {
   AnalyzeSnapshot,
   EnvDraft,
+  EnvVaultApprovalRequest,
+  EnvVaultManagerResponse,
+  EnvVaultRevealRequest,
+  EnvVaultRevealResponse,
+  EnvVaultSaveRequest,
+  EnvVaultSaveResponse,
+  EnvVaultUpdateRequest,
   ExecuteResponse,
   InstalledRepoDetailsResponse,
   InstalledRepoManagerResponse,
@@ -31,11 +38,30 @@ export interface DesktopAppBridge {
   InstalledRepoDetails(
     installedRepoID: number,
   ): Promise<InstalledRepoDetailsResponse>;
+  ApproveEnvVaultEntry(approval: EnvVaultApprovalRequest): Promise<void>;
+  ListEnvVaultEntries(): Promise<EnvVaultManagerResponse>;
   ListInstalledRepos(): Promise<InstalledRepoManagerResponse>;
+  MarkEnvVaultEntryStatus(entryID: number, status: string): Promise<void>;
   OpenDirectory(): Promise<string>;
+  RemoveEnvVaultEntry(entryID: number): Promise<void>;
+  RevealEnvVaultEntry(
+    req: EnvVaultRevealRequest,
+  ): Promise<EnvVaultRevealResponse>;
+  RevokeEnvVaultApproval(approvalID: number): Promise<void>;
   SaveEnvDraft(localPath: string, draft: EnvDraft): Promise<ExecuteResponse>;
   SaveEnvFile(localPath: string, content: string): Promise<ExecuteResponse>;
+  SaveEnvVaultCredential(
+    req: EnvVaultSaveRequest,
+  ): Promise<EnvVaultSaveResponse>;
   ShellInfo(): Promise<unknown>;
+  SuppressEnvVaultPrompt(suppression: {
+    repoPath: string;
+    targetRelativePath: string;
+    variableName: string;
+  }): Promise<void>;
+  UpdateEnvVaultEntry(
+    req: EnvVaultUpdateRequest,
+  ): Promise<EnvVaultSaveResponse>;
 }
 
 interface DesktopBridgeGo {
@@ -113,11 +139,29 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     InstalledRepoDetails(installedRepoID: number) {
       return call("InstalledRepoDetails")(installedRepoID);
     },
+    ApproveEnvVaultEntry(approval: EnvVaultApprovalRequest) {
+      return call("ApproveEnvVaultEntry")(approval);
+    },
+    ListEnvVaultEntries() {
+      return call("ListEnvVaultEntries")();
+    },
     ListInstalledRepos() {
       return call("ListInstalledRepos")();
     },
+    MarkEnvVaultEntryStatus(entryID: number, status: string) {
+      return call("MarkEnvVaultEntryStatus")(entryID, status);
+    },
     OpenDirectory() {
       return call("OpenDirectory")();
+    },
+    RemoveEnvVaultEntry(entryID: number) {
+      return call("RemoveEnvVaultEntry")(entryID);
+    },
+    RevealEnvVaultEntry(req: EnvVaultRevealRequest) {
+      return call("RevealEnvVaultEntry")(req);
+    },
+    RevokeEnvVaultApproval(approvalID: number) {
+      return call("RevokeEnvVaultApproval")(approvalID);
     },
     SaveEnvFile(localPath: string, content: string) {
       return call("SaveEnvFile")(localPath, content);
@@ -125,8 +169,21 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
     SaveEnvDraft(localPath: string, draft: EnvDraft) {
       return call("SaveEnvDraft")(localPath, draft);
     },
+    SaveEnvVaultCredential(req: EnvVaultSaveRequest) {
+      return call("SaveEnvVaultCredential")(req);
+    },
     ShellInfo() {
       return call("ShellInfo")();
+    },
+    SuppressEnvVaultPrompt(suppression: {
+      repoPath: string;
+      targetRelativePath: string;
+      variableName: string;
+    }) {
+      return call("SuppressEnvVaultPrompt")(suppression);
+    },
+    UpdateEnvVaultEntry(req: EnvVaultUpdateRequest) {
+      return call("UpdateEnvVaultEntry")(req);
     },
   };
 }
@@ -140,8 +197,17 @@ export const ExportRepoDiagnostics = desktopApi.ExportRepoDiagnostics;
 export const GenerateEnvDraft = desktopApi.GenerateEnvDraft;
 export const ImportRepository = desktopApi.ImportRepository;
 export const InstalledRepoDetails = desktopApi.InstalledRepoDetails;
+export const ApproveEnvVaultEntry = desktopApi.ApproveEnvVaultEntry;
+export const ListEnvVaultEntries = desktopApi.ListEnvVaultEntries;
 export const ListInstalledRepos = desktopApi.ListInstalledRepos;
+export const MarkEnvVaultEntryStatus = desktopApi.MarkEnvVaultEntryStatus;
 export const OpenDirectory = desktopApi.OpenDirectory;
+export const RemoveEnvVaultEntry = desktopApi.RemoveEnvVaultEntry;
+export const RevealEnvVaultEntry = desktopApi.RevealEnvVaultEntry;
+export const RevokeEnvVaultApproval = desktopApi.RevokeEnvVaultApproval;
 export const SaveEnvFile = desktopApi.SaveEnvFile;
 export const SaveEnvDraft = desktopApi.SaveEnvDraft;
+export const SaveEnvVaultCredential = desktopApi.SaveEnvVaultCredential;
 export const ShellInfo = desktopApi.ShellInfo;
+export const SuppressEnvVaultPrompt = desktopApi.SuppressEnvVaultPrompt;
+export const UpdateEnvVaultEntry = desktopApi.UpdateEnvVaultEntry;

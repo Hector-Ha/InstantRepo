@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"instantrepo/internal/domain"
 	"instantrepo/internal/envcatalog"
@@ -26,14 +27,20 @@ type CredentialStore interface {
 
 type EnvVaultStore interface {
 	SaveEnvVaultEntry(ctx context.Context, entry domain.EnvVaultEntryMetadata) (domain.EnvVaultEntryMetadata, error)
+	UpdateEnvVaultEntryDisplayName(ctx context.Context, entryID int64, displayName string) error
+	UpdateEnvVaultEntryCredentialMetadata(ctx context.Context, entryID int64, fingerprint, fingerprintFragment, status string) error
 	UpdateEnvVaultEntryCredentialKey(ctx context.Context, entryID int64, credentialKey string) error
 	DeleteEnvVaultEntry(ctx context.Context, entryID int64) error
+	EnvVaultEntries(ctx context.Context) ([]domain.EnvVaultEntryMetadata, error)
 	EnvVaultEntryByID(ctx context.Context, entryID int64) (domain.EnvVaultEntryMetadata, error)
 	EnvVaultEntryByProviderFingerprint(ctx context.Context, provider, fingerprint string) (domain.EnvVaultEntryMetadata, error)
 	SetEnvVaultEntryStatus(ctx context.Context, entryID int64, status string) error
 	SaveEnvVaultApproval(ctx context.Context, approval domain.EnvVaultApproval) error
+	EnvVaultApprovals(ctx context.Context, entryID int64) ([]domain.EnvVaultApproval, error)
+	RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error
 	ApprovedEnvVaultEntries(ctx context.Context, repoPath, targetRelativePath, variableName string) ([]domain.EnvVaultEntryMetadata, error)
 	RecordEnvVaultUse(ctx context.Context, record domain.EnvVaultUseRecord) error
+	EnvVaultUseRecords(ctx context.Context, entryID int64) ([]domain.EnvVaultUseRecord, error)
 	SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error
 	IsEnvVaultPromptSuppressed(ctx context.Context, repoPath, targetRelativePath, variableName string) (bool, error)
 }
@@ -59,6 +66,34 @@ func (s *AppService) SaveEnvVaultCredential(ctx context.Context, req domain.EnvV
 	return s.vault.SaveCredential(ctx, req)
 }
 
+func (s *AppService) ListEnvVaultEntries(ctx context.Context) (domain.EnvVaultManagerResponse, error) {
+	if s.vault == nil {
+		return domain.EnvVaultManagerResponse{}, ErrCredentialStoreUnavailable
+	}
+	return s.vault.List(ctx)
+}
+
+func (s *AppService) RevealEnvVaultEntry(ctx context.Context, req domain.EnvVaultRevealRequest) (domain.EnvVaultRevealResponse, error) {
+	if s.vault == nil {
+		return domain.EnvVaultRevealResponse{}, ErrCredentialStoreUnavailable
+	}
+	return s.vault.Reveal(ctx, req)
+}
+
+func (s *AppService) UpdateEnvVaultEntry(ctx context.Context, req domain.EnvVaultUpdateRequest) (domain.EnvVaultSaveResponse, error) {
+	if s.vault == nil {
+		return domain.EnvVaultSaveResponse{}, ErrCredentialStoreUnavailable
+	}
+	return s.vault.Update(ctx, req)
+}
+
+func (s *AppService) RemoveEnvVaultEntry(ctx context.Context, entryID int64) error {
+	if s.vault == nil {
+		return ErrCredentialStoreUnavailable
+	}
+	return s.vault.Remove(ctx, entryID)
+}
+
 func (s *AppService) ApproveEnvVaultEntry(ctx context.Context, approval domain.EnvVaultApproval) error {
 	if s.vault == nil {
 		return ErrCredentialStoreUnavailable
@@ -71,6 +106,13 @@ func (s *AppService) MarkEnvVaultEntryStatus(ctx context.Context, entryID int64,
 		return ErrCredentialStoreUnavailable
 	}
 	return s.vault.MarkStatus(ctx, entryID, status)
+}
+
+func (s *AppService) RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error {
+	if s.vault == nil {
+		return ErrCredentialStoreUnavailable
+	}
+	return s.vault.RevokeApproval(ctx, approvalID)
 }
 
 func (s *AppService) SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
@@ -138,6 +180,137 @@ func (v *EnvVaultService) SaveCredential(ctx context.Context, req domain.EnvVaul
 	return domain.EnvVaultSaveResponse{Entry: saved.EnvVaultEntry}, nil
 }
 
+func (v *EnvVaultService) List(ctx context.Context) (domain.EnvVaultManagerResponse, error) {
+	if v == nil || v.store == nil {
+		return domain.EnvVaultManagerResponse{}, ErrCredentialStoreUnavailable
+	}
+	entries, err := v.store.EnvVaultEntries(ctx)
+	if err != nil {
+		return domain.EnvVaultManagerResponse{}, err
+	}
+	resp := domain.EnvVaultManagerResponse{
+		Entries: make([]domain.EnvVaultManagerEntry, 0, len(entries)),
+	}
+	for _, entry := range entries {
+		approvals, err := v.store.EnvVaultApprovals(ctx, entry.ID)
+		if err != nil {
+			return domain.EnvVaultManagerResponse{}, err
+		}
+		uses, err := v.store.EnvVaultUseRecords(ctx, entry.ID)
+		if err != nil {
+			return domain.EnvVaultManagerResponse{}, err
+		}
+		resp.Entries = append(resp.Entries, domain.EnvVaultManagerEntry{
+			EnvVaultEntry: entry.EnvVaultEntry,
+			Usage:         vaultUsageSummary(uses),
+			Approvals:     approvals,
+		})
+	}
+	return resp, nil
+}
+
+func (v *EnvVaultService) Update(ctx context.Context, req domain.EnvVaultUpdateRequest) (domain.EnvVaultSaveResponse, error) {
+	if v == nil || v.store == nil || v.credential == nil {
+		return domain.EnvVaultSaveResponse{}, ErrCredentialStoreUnavailable
+	}
+	if req.EntryID == 0 {
+		return domain.EnvVaultSaveResponse{}, fmt.Errorf("entry is required")
+	}
+	entry, err := v.store.EnvVaultEntryByID(ctx, req.EntryID)
+	if err != nil {
+		return domain.EnvVaultSaveResponse{}, err
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName != "" && displayName != entry.DisplayName {
+		if err := v.store.UpdateEnvVaultEntryDisplayName(ctx, entry.ID, displayName); err != nil {
+			return domain.EnvVaultSaveResponse{}, err
+		}
+		entry.DisplayName = displayName
+	}
+	if req.UpdateValue {
+		value := strings.TrimSpace(req.Value)
+		if value == "" {
+			return domain.EnvVaultSaveResponse{}, fmt.Errorf("credential value is required")
+		}
+		fingerprint := fingerprintCredential(value)
+		existing, err := v.store.EnvVaultEntryByProviderFingerprint(ctx, entry.Provider, fingerprint)
+		if err == nil && existing.ID != 0 && existing.ID != entry.ID {
+			return domain.EnvVaultSaveResponse{
+				Entry:         existing.EnvVaultEntry,
+				NeedsReview:   true,
+				ReviewMessage: domain.EnvVaultDuplicateReviewMessage,
+			}, nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return domain.EnvVaultSaveResponse{}, err
+		}
+		oldValue, oldErr := v.credential.Get(ctx, entry.CredentialKey)
+		if oldErr != nil {
+			return domain.EnvVaultSaveResponse{}, fmt.Errorf("read existing credential: %w", oldErr)
+		}
+		if err := v.credential.Put(ctx, entry.CredentialKey, value); err != nil {
+			return domain.EnvVaultSaveResponse{}, fmt.Errorf("store credential: %w", err)
+		}
+		fragment := fingerprint[:12]
+		if err := v.store.UpdateEnvVaultEntryCredentialMetadata(ctx, entry.ID, fingerprint, fragment, domain.EnvVaultStatusReady); err != nil {
+			_ = v.credential.Put(ctx, entry.CredentialKey, oldValue)
+			return domain.EnvVaultSaveResponse{}, err
+		}
+		entry.Fingerprint = fingerprint
+		entry.FingerprintFragment = fragment
+		entry.Status = domain.EnvVaultStatusReady
+	}
+	updated, err := v.store.EnvVaultEntryByID(ctx, entry.ID)
+	if err != nil {
+		return domain.EnvVaultSaveResponse{}, err
+	}
+	return domain.EnvVaultSaveResponse{Entry: updated.EnvVaultEntry}, nil
+}
+
+func (v *EnvVaultService) Remove(ctx context.Context, entryID int64) error {
+	if v == nil || v.store == nil || v.credential == nil {
+		return ErrCredentialStoreUnavailable
+	}
+	if entryID == 0 {
+		return fmt.Errorf("entry is required")
+	}
+	entry, err := v.store.EnvVaultEntryByID(ctx, entryID)
+	if err != nil {
+		return err
+	}
+	if entry.CredentialKey != "" {
+		if err := v.credential.Delete(ctx, entry.CredentialKey); err != nil && !errors.Is(err, ErrCredentialUnavailable) {
+			return fmt.Errorf("delete credential: %w", err)
+		}
+	}
+	return v.store.DeleteEnvVaultEntry(ctx, entryID)
+}
+
+func (v *EnvVaultService) Reveal(ctx context.Context, req domain.EnvVaultRevealRequest) (domain.EnvVaultRevealResponse, error) {
+	if v == nil || v.store == nil || v.credential == nil {
+		return domain.EnvVaultRevealResponse{}, ErrCredentialStoreUnavailable
+	}
+	if req.EntryID == 0 {
+		return domain.EnvVaultRevealResponse{}, fmt.Errorf("entry is required")
+	}
+	if !req.Confirmed {
+		return domain.EnvVaultRevealResponse{}, fmt.Errorf("credential reveal requires confirmation")
+	}
+	entry, err := v.store.EnvVaultEntryByID(ctx, req.EntryID)
+	if err != nil {
+		return domain.EnvVaultRevealResponse{}, err
+	}
+	value, err := v.credential.Get(ctx, entry.CredentialKey)
+	if err != nil {
+		return domain.EnvVaultRevealResponse{}, fmt.Errorf("read credential: %w", err)
+	}
+	return domain.EnvVaultRevealResponse{
+		EntryID:     entry.ID,
+		Value:       value,
+		RevealUntil: time.Now().UTC().Add(30 * time.Second),
+	}, nil
+}
+
 func (v *EnvVaultService) Approve(ctx context.Context, approval domain.EnvVaultApproval) error {
 	if v == nil || v.store == nil {
 		return ErrCredentialStoreUnavailable
@@ -145,7 +318,7 @@ func (v *EnvVaultService) Approve(ctx context.Context, approval domain.EnvVaultA
 	approval.RepoPath = strings.TrimSpace(approval.RepoPath)
 	approval.TargetRelativePath = strings.TrimSpace(approval.TargetRelativePath)
 	approval.VariableName = strings.ToUpper(strings.TrimSpace(approval.VariableName))
-	approval.Status = "approved"
+	approval.Status = domain.EnvVaultApprovalStatusApproved
 	if approval.EntryID == 0 || approval.RepoPath == "" || approval.TargetRelativePath == "" || approval.VariableName == "" {
 		return fmt.Errorf("entry, repo, target, and variable are required")
 	}
@@ -157,6 +330,16 @@ func (v *EnvVaultService) MarkStatus(ctx context.Context, entryID int64, status 
 		return fmt.Errorf("valid entry status is required")
 	}
 	return v.store.SetEnvVaultEntryStatus(ctx, entryID, status)
+}
+
+func (v *EnvVaultService) RevokeApproval(ctx context.Context, approvalID int64) error {
+	if v == nil || v.store == nil {
+		return ErrCredentialStoreUnavailable
+	}
+	if approvalID == 0 {
+		return fmt.Errorf("approval is required")
+	}
+	return v.store.RevokeEnvVaultApproval(ctx, approvalID)
 }
 
 func (v *EnvVaultService) ApplyApprovedBindings(ctx context.Context, draft *domain.EnvDraft) error {
@@ -321,6 +504,23 @@ func containsVaultEntry(entries []domain.EnvVaultEntryMetadata, entryID int64) b
 		}
 	}
 	return false
+}
+
+func vaultUsageSummary(records []domain.EnvVaultUseRecord) domain.EnvVaultUsageSummary {
+	summary := domain.EnvVaultUsageSummary{
+		Locations: make([]domain.EnvVaultUsageLocation, 0, len(records)),
+	}
+	for _, record := range records {
+		summary.TotalUseCount += record.UseCount
+		summary.Locations = append(summary.Locations, domain.EnvVaultUsageLocation{
+			RepoPath:           record.RepoPath,
+			TargetRelativePath: record.TargetRelativePath,
+			VariableName:       record.VariableName,
+			LastUsedAt:         record.UsedAt,
+			UseCount:           record.UseCount,
+		})
+	}
+	return summary
 }
 
 func vaultBinding(entry domain.EnvVaultEntryMetadata) *domain.EnvVaultBinding {
