@@ -71,7 +71,7 @@ test("vault bindings render masked and can be cleared for manual entry", () => {
   draft.targets[0].values[0] = {
     ...draft.targets[0].values[0],
     value: "",
-    vaultBinding: { fingerprint: "abc123ff", label: "OpenAI dev key" },
+    vaultBinding: { fingerprint: "abc123ff", displayName: "OpenAI dev key" },
   };
 
   expect(renderRawTarget(draft.targets[0])).toContain(
@@ -81,4 +81,18 @@ test("vault bindings render masked and can be cleared for manual entry", () => {
   const cleared = clearVaultBinding(draft, "api\\.env", "API_URL");
   expect(cleared.targets[0].values[0].vaultBinding).toBeUndefined();
   expect(cleared.targets[0].values[0].value).toBe("");
+});
+
+test("deleting a raw vault line clears the vault binding", () => {
+  const draft = twoTargetDraft();
+  draft.targets[0].values[0] = {
+    ...draft.targets[0].values[0],
+    value: "",
+    vaultBinding: { fingerprint: "abc123ff", displayName: "OpenAI dev key" },
+  };
+
+  const edited = applyRawTargetContent(draft, "api\\.env", "\n");
+
+  expect(edited.targets[0].values[0].vaultBinding).toBeUndefined();
+  expect(edited.targets[0].values[0].value).toBe("");
 });

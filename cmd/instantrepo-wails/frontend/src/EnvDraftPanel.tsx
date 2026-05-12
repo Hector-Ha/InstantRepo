@@ -4,6 +4,7 @@ import {
   clearVaultBinding,
   renderRawTarget,
   updateEnvDraftValue,
+  vaultBindingLabel,
 } from "./envDraft";
 
 type DraftMode = "structured" | "raw";
@@ -115,7 +116,7 @@ export function EnvDraftPanel({
                         <span>{value.name}</span>
                         {value.vaultBinding ? (
                           <div className="vault-tag">
-                            <strong>{value.vaultBinding.label ?? "Vault value"}</strong>
+                            <strong>{vaultBindingLabel(value.vaultBinding)}</strong>
                             <code>{value.vaultBinding.fingerprint}</code>
                             <button
                               type="button"

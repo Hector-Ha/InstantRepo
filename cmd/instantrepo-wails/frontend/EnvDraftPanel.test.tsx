@@ -59,3 +59,43 @@ test("EnvDraftPanel renders grouped target files and metadata", () => {
   expect(html).toContain("dev_default · allocator · 86%");
   expect(html).toContain("Check local database port.");
 });
+
+test("EnvDraftPanel displays backend vault binding display name", () => {
+  const draft: EnvDraft = {
+    repoPath: "C:\\Repos\\app",
+    targets: [
+      {
+        relativePath: ".env",
+        absolutePath: "C:\\Repos\\app\\.env",
+        originalContent: "",
+        values: [
+          {
+            name: "OPENAI_API_KEY",
+            value: "",
+            secret: true,
+            confidence: 0.9,
+            provenance: { source: "vault" },
+            vaultBinding: {
+              fingerprint: "abc123ff",
+              displayName: "OpenAI dev key",
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const html = renderToStaticMarkup(
+    <EnvDraftPanel
+      draft={draft}
+      mode="structured"
+      selectedRawTarget=".env"
+      onModeChange={noop}
+      onSelectedRawTargetChange={noop}
+      onChange={noop}
+    />,
+  );
+
+  expect(html).toContain("OpenAI dev key");
+  expect(html).toContain("abc123ff");
+});

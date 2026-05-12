@@ -7,13 +7,24 @@ import (
 	"strings"
 )
 
-var envLinePattern = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
+var (
+	envLinePattern      = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
+	envLinePartsPattern = regexp.MustCompile(`^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
+)
 
 func formatEnvAssignment(name, value string) string {
 	if needsQuoting(value) {
 		return fmt.Sprintf("%s=%q", name, value)
 	}
 	return fmt.Sprintf("%s=%s", name, value)
+}
+
+func formatEnvAssignmentLike(line, name, value string) string {
+	prefix := ""
+	if matches := envLinePartsPattern.FindStringSubmatch(strings.TrimRight(line, "\r")); len(matches) == 4 {
+		prefix = matches[1]
+	}
+	return prefix + formatEnvAssignment(name, value)
 }
 
 func needsQuoting(value string) bool {
@@ -70,7 +81,7 @@ func redactServiceCredentialAssignments(content string, serviceCredentialNames m
 		if strings.TrimSpace(matches[2]) == "" {
 			continue
 		}
-		lines[i] = name + "="
+		lines[i] = formatEnvAssignmentLike(line, name, "")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -89,7 +100,7 @@ func replaceEnvAssignments(content string, values map[string]string) string {
 		if !ok {
 			continue
 		}
-		lines[i] = formatEnvAssignment(matches[1], value)
+		lines[i] = formatEnvAssignmentLike(line, matches[1], value)
 	}
 	return strings.Join(lines, "\n")
 }

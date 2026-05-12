@@ -125,45 +125,7 @@ func (m *EnvDraftManager) BuildDraft(analysis domain.RepositoryAnalysis) (domain
 }
 
 func (m *EnvDraftManager) SaveAll(draft domain.EnvDraft) (domain.EnvSaveResult, error) {
-	result := domain.EnvSaveResult{}
-	if err := validateEnvDraftTargets(draft); err != nil {
-		for _, target := range draft.Targets {
-			if validateErr := validateEnvDraftTarget(draft.RepoPath, target); validateErr != nil {
-				result.Targets = append(result.Targets, envSaveFailure(target.RelativePath, "invalid_target"))
-				return result, err
-			}
-		}
-		return result, err
-	}
-	preserveExistingServiceCredentialValues(&draft)
-	m.preserveUntrackedServiceCredentialValues(&draft)
-
-	rollbacks := []envTargetRollback{}
-	for _, target := range draft.Targets {
-		rendered := renderEnvDraftTarget(target)
-		rollback, err := readEnvTargetRollback(target.AbsolutePath)
-		if err != nil {
-			result.Targets = append(result.Targets, envSaveFailure(target.RelativePath, "read_failed"))
-			rollbackEnvTargets(rollbacks)
-			return result, fmt.Errorf("read env target %s before save: %w", target.RelativePath, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(target.AbsolutePath), 0o755); err != nil {
-			result.Targets = append(result.Targets, envSaveFailure(target.RelativePath, "permission"))
-			rollbackEnvTargets(rollbacks)
-			return result, fmt.Errorf("create env directory for %s: %w", target.RelativePath, err)
-		}
-		if err := m.writeEnvTargetWithRetry(target.AbsolutePath, []byte(rendered)); err != nil {
-			result.Targets = append(result.Targets, envSaveFailure(target.RelativePath, "write_failed"))
-			rollbackEnvTargets(append(rollbacks, rollback))
-			return result, envSaveError(target.RelativePath, "write_failed")
-		}
-		rollbacks = append(rollbacks, rollback)
-		result.Targets = append(result.Targets, domain.EnvSaveTargetResult{
-			RelativePath: target.RelativePath,
-			Succeeded:    true,
-		})
-	}
-	return result, nil
+	return m.savePolicy().SaveAll(draft)
 }
 
 func (m *EnvDraftManager) preserveUntrackedServiceCredentialValues(draft *domain.EnvDraft) {
@@ -870,7 +832,7 @@ func renderEnvDraftTarget(target domain.EnvDraftTarget) string {
 			continue
 		}
 		seen[name] = true
-		builder.WriteString(formatEnvAssignment(name, value.Value))
+		builder.WriteString(formatEnvAssignmentLike(line, name, value.Value))
 		builder.WriteString("\n")
 	}
 

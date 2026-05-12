@@ -1,4 +1,4 @@
-import type { EnvDraft, EnvDraftTarget } from "./types";
+import type { EnvDraft, EnvDraftTarget, EnvVaultBinding } from "./types";
 
 const envLinePattern = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/;
 
@@ -79,6 +79,10 @@ export function applyRawTargetContent(
     }
     for (const item of target.values) {
       if (!values.has(item.name)) {
+        if (item.vaultBinding) {
+          item.value = "";
+          item.vaultBinding = undefined;
+        }
         continue;
       }
       const nextValue = values.get(item.name) ?? "";
@@ -90,6 +94,10 @@ export function applyRawTargetContent(
     }
   }
   return next;
+}
+
+export function vaultBindingLabel(binding: EnvVaultBinding): string {
+  return binding.displayName?.trim() || binding.label?.trim() || "Vault value";
 }
 
 function parseRawValues(content: string) {

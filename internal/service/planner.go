@@ -254,6 +254,9 @@ func scanSafety(repoPath string) domain.SafetyReport {
 
 	_ = filepath.Walk(repoPath, func(path string, info fs.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
+			if info != nil && info.IsDir() && shouldSkipGeneratedRepoDir(info.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -276,6 +279,15 @@ func scanSafety(repoPath string) domain.SafetyReport {
 	return domain.SafetyReport{
 		RiskLevel: riskLevel,
 		Findings:  findings,
+	}
+}
+
+func shouldSkipGeneratedRepoDir(name string) bool {
+	switch name {
+	case "node_modules", ".git", "vendor", "build", "dist", ".next":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -755,6 +755,42 @@ func TestSaveAllUpdatesExistingAssignmentsAndAppendsNewValues(t *testing.T) {
 	}
 }
 
+func TestSaveAllPreservesExportPrefixOnUpdatedAssignments(t *testing.T) {
+	repoPath := t.TempDir()
+	targetPath := filepath.Join(repoPath, ".env")
+	existing := "export APP_URL=http://localhost:3000\n"
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write target env: %v", err)
+	}
+
+	manager := NewEnvDraftManager()
+	draft, err := manager.BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			TargetPath: targetPath,
+			Variables: []domain.EnvVarRequirement{
+				{Name: "APP_URL", SuggestedValue: "http://localhost:4000"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+	draft.Targets[0].Values[0].Value = "http://localhost:4000"
+
+	if _, err := manager.SaveAll(draft); err != nil {
+		t.Fatalf("SaveAll returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read saved env: %v", err)
+	}
+	if got := string(raw); got != "export APP_URL=http://localhost:4000\n" {
+		t.Fatalf("expected export prefix preserved, got:\n%s", got)
+	}
+}
+
 func TestSaveAllValidatesAllTargetsBeforeWriting(t *testing.T) {
 	repoPath := t.TempDir()
 	targetPath := filepath.Join(repoPath, ".env")
