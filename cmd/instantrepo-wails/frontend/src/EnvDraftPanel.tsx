@@ -13,10 +13,17 @@ function confidenceLabel(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function provenanceLabel(source: string) {
+  if (source === "ai_patch") {
+    return "AI reviewed";
+  }
+  return source;
+}
+
 function valueMeta(value: EnvDraftValue) {
   return [
     value.valueClass,
-    value.provenance.source,
+    provenanceLabel(value.provenance.source),
     confidenceLabel(value.confidence),
   ]
     .filter(Boolean)

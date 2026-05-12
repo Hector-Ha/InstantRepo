@@ -405,6 +405,7 @@ const (
 	EnvValueSourceAllocator       = "allocator"
 	EnvValueSourceGeneratedSecret = "generated_secret"
 	EnvValueSourceVault           = "vault"
+	EnvValueSourceAIPatch         = "ai_patch"
 )
 
 const (
@@ -441,6 +442,73 @@ type EnvDraftValue struct {
 
 type EnvValueProvenance struct {
 	Source string `json:"source"`
+}
+
+type AIEnvReviewBundle struct {
+	SchemaVersion string                      `json:"schemaVersion"`
+	Repo          AIEnvReviewRepo             `json:"repo"`
+	FileTree      []string                    `json:"fileTree"`
+	Manifests     []AIEnvReviewManifest       `json:"manifests"`
+	SetupExcerpts []AIEnvReviewExcerpt        `json:"setupExcerpts"`
+	EnvNames      []string                    `json:"envNames"`
+	Targets       []AIEnvReviewTarget         `json:"targets"`
+	UsageSnippets []AIEnvReviewUsageSnippet   `json:"usageSnippets"`
+	Topology      AppTopology                 `json:"topology"`
+	Candidates    []AIEnvReviewDraftCandidate `json:"candidates"`
+}
+
+type AIEnvReviewRepo struct {
+	Public             bool   `json:"public"`
+	URL                string `json:"url,omitempty"`
+	CommitSHA          string `json:"commitSha,omitempty"`
+	IdentityOmitted    bool   `json:"identityOmitted,omitempty"`
+	PrivateOrUncertain bool   `json:"privateOrUncertain,omitempty"`
+}
+
+type AIEnvReviewManifest struct {
+	RelativePath string            `json:"relativePath"`
+	Scripts      map[string]string `json:"scripts,omitempty"`
+}
+
+type AIEnvReviewExcerpt struct {
+	RelativePath string `json:"relativePath"`
+	Text         string `json:"text"`
+}
+
+type AIEnvReviewTarget struct {
+	RelativePath string   `json:"relativePath"`
+	EnvNames     []string `json:"envNames"`
+}
+
+type AIEnvReviewUsageSnippet struct {
+	RelativePath string `json:"relativePath"`
+	EnvName      string `json:"envName"`
+	Snippet      string `json:"snippet"`
+}
+
+type AIEnvReviewDraftCandidate struct {
+	TargetRelativePath string  `json:"targetRelativePath"`
+	VariableName       string  `json:"variableName"`
+	ValueClass         string  `json:"valueClass"`
+	CurrentValue       string  `json:"currentValue,omitempty"`
+	CurrentValueState  string  `json:"currentValueState"`
+	Confidence         float64 `json:"confidence"`
+	Provenance         string  `json:"provenance"`
+}
+
+type EnvPatch struct {
+	Operations []EnvPatchOperation `json:"operations"`
+}
+
+type EnvPatchOperation struct {
+	Op                 string  `json:"op"`
+	TargetRelativePath string  `json:"targetRelativePath,omitempty"`
+	VariableName       string  `json:"variableName,omitempty"`
+	Value              string  `json:"value,omitempty"`
+	Confidence         float64 `json:"confidence,omitempty"`
+	Reason             string  `json:"reason,omitempty"`
+	Path               string  `json:"path,omitempty"`
+	Command            string  `json:"command,omitempty"`
 }
 
 type EnvSaveResult struct {

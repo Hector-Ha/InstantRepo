@@ -15,17 +15,19 @@ import (
 )
 
 type AppService struct {
-	fetcher        *RepoFetcher
-	analyzer       *analyzer.RepositoryAnalyzer
-	detector       EnvironmentDetector
-	planner        *Planner
-	executor       *Executor
-	envDrafts      *EnvDraftManager
-	vault          *EnvVaultService
-	contribution   *EnvContributionService
-	installedRepos InstalledRepoStore
-	setupRecorder  *setupSessionRecorder
-	disk           DiskChecker
+	fetcher            *RepoFetcher
+	analyzer           *analyzer.RepositoryAnalyzer
+	detector           EnvironmentDetector
+	planner            *Planner
+	executor           *Executor
+	envDrafts          *EnvDraftManager
+	vault              *EnvVaultService
+	contribution       *EnvContributionService
+	aiEnvReview        *AIEnvReviewService
+	aiEnvReviewEnabled bool
+	installedRepos     InstalledRepoStore
+	setupRecorder      *setupSessionRecorder
+	disk               DiskChecker
 }
 
 type EnvironmentDetector interface {
@@ -63,6 +65,7 @@ func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *App
 		planner:        NewPlanner(),
 		executor:       NewExecutor(),
 		envDrafts:      NewEnvDraftManager(),
+		aiEnvReview:    NewAIEnvReviewService(nil),
 		installedRepos: installedRepos,
 		setupRecorder:  newSetupSessionRecorder(installedRepos),
 		disk:           osDiskChecker{},
@@ -339,6 +342,9 @@ func (s *AppService) GenerateEnvDraft(ctx context.Context, localPath string) (do
 		if err := s.vault.ApplyApprovedBindings(ctx, &draft); err != nil {
 			return domain.EnvDraft{}, err
 		}
+	}
+	if s.aiEnvReviewEnabled && s.aiEnvReview != nil {
+		_ = s.aiEnvReview.ReviewDraft(ctx, analyzeResp, &draft)
 	}
 	return draft, nil
 }
