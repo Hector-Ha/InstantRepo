@@ -38,13 +38,25 @@ Current Env Draft foundation includes:
 - User Env Vault backend: store approved service credentials in the OS credential store and keep only metadata, approvals, fingerprints, and use records in the Local App Database.
 - Deepened Env Draft internals: target inference and save policy now live behind smaller behavior-tested modules.
 
-Remaining roadmap:
-
-- Env Vault Manager: dedicated UI for saved credentials, approvals, usage, reveal, action-needed state, and removal.
-- Env Pattern Contribution: opt-in value-free env-name/context reports for future catalog patches.
-- AI Env Review: bounded review of low-confidence non-secret defaults through validated Env Patches, not raw secrets or full repo files.
+The Env Draft foundation roadmap is complete through Env Vault Manager, Env Pattern Contribution, and AI Env Review Bundle support.
 
 See `CONTEXT.md` and `docs/adr/0002-use-catalog-driven-env-drafts.md` for the product rules.
+
+## CLI Mirror Direction
+
+The current roadmap is to mirror Wails app operations through production-safe CLI subcommands. The CLI is product surface for users, devs, and agents, not a QA-only backdoor.
+
+The CLI mirror track covers:
+
+- stable subcommands with human output by default and `--json` for agents
+- structured JSON errors and CLI contract version metadata
+- app-data isolation through an explicit app data directory option
+- repository analyze, clone preflight, import, and execute flows
+- Env Draft generate/save flows
+- installed repo history and credential-free diagnostics
+- Env Vault, contribution settings, AI Env Review settings, and bridge contract metadata
+
+See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and child issues [#35](https://github.com/Hector-Ha/InstantRepo/issues/35)-[#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
 
 ## Project Shape
 
@@ -185,7 +197,7 @@ README commands can help, but do not beat manifest-backed commands.
 
 ## Active Roadmap
 
-Env Draft foundation is tracked in GitHub Issues:
+Completed Env Draft foundation:
 
 1. [#15 PRD: Catalog-driven Env Drafts and Vault-backed Credentials](https://github.com/Hector-Ha/InstantRepo/issues/15) is the parent track.
 2. [#16 Env Draft model + safe Save All](https://github.com/Hector-Ha/InstantRepo/issues/16) is done.
@@ -193,10 +205,10 @@ Env Draft foundation is tracked in GitHub Issues:
 4. [#18 Env Default Catalog](https://github.com/Hector-Ha/InstantRepo/issues/18) is done.
 5. [#19 App Topology + allocator](https://github.com/Hector-Ha/InstantRepo/issues/19) is done.
 6. [#20 Structured Env UI](https://github.com/Hector-Ha/InstantRepo/issues/20) is done.
-7. [#21 User Env Vault backend](https://github.com/Hector-Ha/InstantRepo/issues/21) has backend foundation in master and should be verified before moving to UI work.
-8. [#22 Env Vault Manager](https://github.com/Hector-Ha/InstantRepo/issues/22) is next UI work after #21 is accepted.
-9. [#23 Env Pattern Contribution](https://github.com/Hector-Ha/InstantRepo/issues/23) follows the vault manager unless maintainer reprioritizes telemetry earlier.
-10. [#24 AI Env Review + Env Patch](https://github.com/Hector-Ha/InstantRepo/issues/24) should follow deterministic and vault foundations.
+7. [#21 User Env Vault backend](https://github.com/Hector-Ha/InstantRepo/issues/21) is done.
+8. [#22 Env Vault Manager](https://github.com/Hector-Ha/InstantRepo/issues/22) is done.
+9. [#23 Env Pattern Contribution](https://github.com/Hector-Ha/InstantRepo/issues/23) is done.
+10. [#24 AI Env Review + Env Patch](https://github.com/Hector-Ha/InstantRepo/issues/24) is done.
 
 Architecture cleanup also landed after #20:
 
@@ -204,11 +216,21 @@ Architecture cleanup also landed after #20:
 - [#26 Deepen setup safety scan with ignored generated folders](https://github.com/Hector-Ha/InstantRepo/issues/26)
 - [#27 Deepen Env Draft foundation interfaces](https://github.com/Hector-Ha/InstantRepo/issues/27)
 
+Current ready-for-agent roadmap:
+
+1. [#34 PRD: Mirror Wails app operations through production-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/34)
+2. [#35 CLI foundation, JSON contract, and app-data isolation](https://github.com/Hector-Ha/InstantRepo/issues/35)
+3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36)
+4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37)
+5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40)
+6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38)
+7. [#39 Env Vault secret-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/39)
+8. [#41 CLI mirror and private QA convention docs](https://github.com/Hector-Ha/InstantRepo/issues/41)
+
 ## Next Work
 
-- Stream live logs while step runs.
-- Improve version match logic.
-- Build Env Draft foundation from the active roadmap.
+- Start #35 CLI mirror foundation.
+- Keep `.qa-local/` private and ignored; do not commit private QA harness files.
 - Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.
 - Add optional reputation scan for risky files.

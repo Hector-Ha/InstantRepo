@@ -24,6 +24,21 @@ Use staged testing:
 
 The app executes local commands. Treat unknown repos as untrusted code.
 
+## Private Agent QA Direction
+
+This manual plan stays as public product QA guidance. Agent-supervised QA harness work lives in ignored `.qa-local/` or a private QA repo, not in public GitHub issues.
+
+Private QA should:
+
+- use Chrome as a tester/agent control surface, not as a browser-product app
+- drive InstantRepo through real frontend flow and production-safe CLI surfaces
+- avoid public QA backdoors, raw shell endpoints, approval bypasses, or shipped QA overlays
+- pin CLI, frontend, and Wails builds before official verdict scenarios
+- use temp app data and fresh target repo clones
+- write local reports/evidence only, then let the tester decide whether to create credential-free public issues
+
+Public work that supports this lives in the CLI mirror roadmap: #34 and child issues #35-#41.
+
 ## Safety Rules
 
 - Use a disposable VM or secondary machine for unknown repos.

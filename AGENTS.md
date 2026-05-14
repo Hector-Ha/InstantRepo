@@ -36,35 +36,60 @@ Single-context repo: root `CONTEXT.md`, future ADRs in `docs/adr/`. See `docs/ag
 - Use `handoff` before stopping long work that another agent must continue.
 - Use `caveman-commit` for commit messages.
 
-## Active Env Draft Track
+## Active Roadmap
 
-Env Draft foundation is main current roadmap. Read `CONTEXT.md` and `docs/adr/0002-use-catalog-driven-env-drafts.md` before touching it.
+Read `CONTEXT.md` and ADRs before touching roadmap work.
 
-Parent PRD:
+### Completed Env Draft Track
+
+Env Draft foundation is complete through these public issues:
 
 - `#15` Catalog-driven Env Drafts and Vault-backed Credentials.
+- `#16` Build structured Env Draft model with provenance and safe Save All.
+- `#17` Infer local env targets from env files and code usage.
+- `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults.
+- `#19` Detect App Topology and allocate coherent local dev values.
+- `#20` Ship structured Env Draft UI with grouped targets and raw vault tags.
+- `#21` Add User Env Vault backend with OS credential storage and approvals.
+- `#22` Build Env Vault Manager for credentials, usage, and action-needed states.
+- `#23` Add Env Pattern Contribution settings, public filtering, and offline queue.
+- `#24` Add AI Env Review Bundle and Env Patch validation.
 
-Implementation order:
-
-1. `#16` Build structured Env Draft model with provenance and safe Save All. Done.
-2. `#17` Infer local env targets from env files and code usage. Done.
-3. `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults. Done.
-4. `#19` Detect App Topology and allocate coherent local dev values. Done.
-5. `#20` Ship structured Env Draft UI with grouped targets and raw vault tags. Done.
-6. `#21` Add User Env Vault backend with OS credential storage and approvals. Backend is in master; verify issue and close or finish gaps before #22.
-7. `#22` Build Env Vault Manager for credentials, usage, and action-needed states.
-8. `#23` Add Env Pattern Contribution settings, public filtering, and offline queue.
-9. `#24` Add AI Env Review Bundle and Env Patch validation.
-
-Do not skip dependencies unless maintainer says so. Each issue is meant as vertical slice, but issue `#22`, `#23`, and `#24` depend on earlier domain/backend foundation.
-
-Architecture cleanup:
+Architecture cleanup is also complete:
 
 - `#25` PRD: Deepen setup architecture after Env Draft foundation. Closed.
 - `#26` Deepen setup safety scan with ignored generated folders. Closed.
 - `#27` Deepen Env Draft foundation interfaces for target inference and save policy. Closed.
 
-These cleanup issues support #21-#24. They do not replace the Env Draft roadmap.
+### Active CLI Mirror Track
+
+Public CLI mirroring is current ready-for-agent work. It is product work, not QA-only work. Private QA is only one consumer.
+
+Parent PRD:
+
+- `#34` Mirror Wails app operations through production-safe CLI.
+
+Implementation order:
+
+1. `#35` Add CLI mirror foundation, JSON contract, and app-data isolation.
+2. `#36` Mirror repository analyze, import, preflight, and execute in CLI.
+3. `#37` Mirror Env Draft generate and save flows in CLI.
+4. `#40` Mirror settings and bridge contract metadata in CLI.
+5. `#38` Mirror installed repo history and diagnostics in CLI.
+6. `#39` Mirror Env Vault operations in secret-safe CLI.
+7. `#41` Document CLI mirror and private QA convention.
+
+Do not implement private QA harness code in public issues. Public work must stay production-safe.
+
+### Private QA Workspace
+
+`.qa-local/` is ignored by git and may contain private QA harness docs, local issues, scenarios, reports, screenshots, logs, and evidence.
+
+- Do not commit `.qa-local/`.
+- Use `.qa-local/` only when the tester asks for QA work.
+- Public GitHub issues must not include secrets or private harness implementation details.
+- Public app must not gain QA-only backdoors, hidden debug bridges, raw shell endpoints, or approval bypasses.
+- Local private QA issues live in `.qa-local/issues`.
 
 Current important Env modules:
 

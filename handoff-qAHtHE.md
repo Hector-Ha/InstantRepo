@@ -1,5 +1,7 @@
 # Handoff: Env Draft Architecture Improve
 
+> Superseded status: this handoff records older Env Draft architecture work that has since landed. Current roadmap is the CLI mirror/private QA track in `CONTEXT.md`, ADR 0003, GitHub #34-#41, and `C:\Users\Admin\AppData\Local\Temp\handoff-70e034.md`. Use this file only as historical context for the Env Draft refactor.
+
 ## Context
 
 Repo: `C:\Users\Admin\Desktop\Projects\Personal_Projects\InstantRepo`
