@@ -10,21 +10,27 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"instantrepo/internal/api"
+	"instantrepo/internal/contract"
 	"instantrepo/internal/domain"
 	"instantrepo/internal/service"
 	"instantrepo/internal/store"
 )
 
-const CLIContractVersion = "2026-05-issue-37"
+const (
+	CLIContractVersion    = contract.CLIContractVersion
+	BridgeContractVersion = contract.BridgeContractVersion
+)
 
 type VersionInfo struct {
-	AppVersion         string `json:"appVersion"`
-	GitCommit          string `json:"gitCommit,omitempty"`
-	CLIContractVersion string `json:"cliContractVersion"`
+	AppVersion            string `json:"appVersion"`
+	GitCommit             string `json:"gitCommit,omitempty"`
+	CLIContractVersion    string `json:"cliContractVersion"`
+	BridgeContractVersion string `json:"bridgeContractVersion"`
 }
 
 type Options struct {
@@ -49,6 +55,12 @@ type App interface {
 	GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error)
 	SaveStructuredEnvDraft(ctx context.Context, localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error)
 	SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error)
+	EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettingsResponse, error)
+	SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) (domain.EnvContributionSettingsResponse, error)
+	RecordEnvContributionConsent(ctx context.Context, publicEnabled bool) (domain.EnvContributionSettingsResponse, error)
+	ClearEnvContributionQueue(ctx context.Context) (domain.EnvContributionSettingsResponse, error)
+	AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error)
+	SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) (domain.AIEnvReviewSettings, error)
 }
 
 type appWithServer struct {
@@ -81,6 +93,30 @@ func (a appWithServer) SaveStructuredEnvDraft(ctx context.Context, localPath str
 
 func (a appWithServer) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
 	return a.app.SaveRawEnv(ctx, localPath, content)
+}
+
+func (a appWithServer) EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettingsResponse, error) {
+	return a.app.EnvContributionSettings(ctx)
+}
+
+func (a appWithServer) SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) (domain.EnvContributionSettingsResponse, error) {
+	return a.app.SaveEnvContributionSettings(ctx, settings)
+}
+
+func (a appWithServer) RecordEnvContributionConsent(ctx context.Context, publicEnabled bool) (domain.EnvContributionSettingsResponse, error) {
+	return a.app.RecordEnvContributionConsent(ctx, publicEnabled)
+}
+
+func (a appWithServer) ClearEnvContributionQueue(ctx context.Context) (domain.EnvContributionSettingsResponse, error) {
+	return a.app.ClearEnvContributionQueue(ctx)
+}
+
+func (a appWithServer) AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error) {
+	return a.app.AIEnvReviewSettings(ctx)
+}
+
+func (a appWithServer) SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) (domain.AIEnvReviewSettings, error) {
+	return a.app.SaveAIEnvReviewSettings(ctx, settings)
 }
 
 func Run(ctx context.Context, opts Options) int {
@@ -116,6 +152,9 @@ func withDefaults(opts Options) Options {
 	if opts.Version.CLIContractVersion == "" {
 		opts.Version.CLIContractVersion = CLIContractVersion
 	}
+	if opts.Version.BridgeContractVersion == "" {
+		opts.Version.BridgeContractVersion = BridgeContractVersion
+	}
 	if opts.NewApp == nil {
 		opts.NewApp = newServiceApp
 	}
@@ -129,6 +168,10 @@ func runSubcommand(ctx context.Context, opts Options, global globalFlags, args [
 		return runEnv(ctx, opts, global, args[1:])
 	case "repo":
 		return runRepo(ctx, opts, global, args[1:])
+	case "settings":
+		return runSettings(ctx, opts, global, args[1:])
+	case "shell":
+		return runShell(opts, global, args[1:])
 	case "version":
 		return runVersion(opts, global, args[1:])
 	default:
@@ -137,6 +180,297 @@ func runSubcommand(ctx context.Context, opts Options, global globalFlags, args [
 			Message: fmt.Sprintf("unknown command %q", name),
 		}, global.JSON || hasJSONFlag(args[1:]))
 	}
+}
+
+func runSettings(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "settings command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "contribution":
+		return runSettingsContribution(ctx, opts, global, args[1:])
+	case "ai-env-review":
+		return runSettingsAIEnvReview(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown settings command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runSettingsContribution(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "settings contribution command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "get":
+		return runSettingsContributionGet(ctx, opts, global, args[1:])
+	case "save":
+		return runSettingsContributionSave(ctx, opts, global, args[1:])
+	case "consent":
+		return runSettingsContributionConsent(ctx, opts, global, args[1:])
+	case "clear-queue":
+		return runSettingsContributionClearQueue(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown settings contribution command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runSettingsContributionGet(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings contribution get", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.EnvContributionSettings(ctx)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_contribution_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeContributionSettingsSummary(opts.Stdout, resp)
+}
+
+func runSettingsContributionSave(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings contribution save", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	inputPath := fs.String("file", "", "settings JSON file")
+	readStdin := fs.Bool("stdin", false, "read settings JSON from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	raw, err := readCommandInput(opts, *inputPath, *readStdin, "contribution settings input")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	var settings domain.EnvContributionSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_input", Message: fmt.Sprintf("decode contribution settings JSON: %v", err)}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.SaveEnvContributionSettings(ctx, settings)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_contribution_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeContributionSettingsSummary(opts.Stdout, resp)
+}
+
+func runSettingsContributionConsent(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings contribution consent", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	publicEnabled := fs.String("public-enabled", "", "enable public env pattern contribution")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*publicEnabled) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_public_enabled", Message: "--public-enabled is required"}, *jsonOut)
+	}
+	enabled, err := strconv.ParseBool(*publicEnabled)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: "--public-enabled must be true or false"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.RecordEnvContributionConsent(ctx, enabled)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_contribution_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeContributionSettingsSummary(opts.Stdout, resp)
+}
+
+func runSettingsContributionClearQueue(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings contribution clear-queue", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ClearEnvContributionQueue(ctx)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_contribution_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeContributionSettingsSummary(opts.Stdout, resp)
+}
+
+func runSettingsAIEnvReview(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "settings ai-env-review command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "get":
+		return runSettingsAIEnvReviewGet(ctx, opts, global, args[1:])
+	case "save":
+		return runSettingsAIEnvReviewSave(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown settings ai-env-review command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runSettingsAIEnvReviewGet(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings ai-env-review get", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	settings, err := app.AIEnvReviewSettings(ctx)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_ai_env_review_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: settings, Metadata: opts.Version})
+	}
+	return writeAIEnvReviewSettingsSummary(opts.Stdout, settings)
+}
+
+func runSettingsAIEnvReviewSave(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("settings ai-env-review save", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	inputPath := fs.String("file", "", "settings JSON file")
+	readStdin := fs.Bool("stdin", false, "read settings JSON from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	raw, err := readCommandInput(opts, *inputPath, *readStdin, "AI Env Review settings input")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	var settings domain.AIEnvReviewSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_input", Message: fmt.Sprintf("decode AI Env Review settings JSON: %v", err)}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	saved, err := app.SaveAIEnvReviewSettings(ctx, settings)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "settings_ai_env_review_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: saved, Metadata: opts.Version})
+	}
+	return writeAIEnvReviewSettingsSummary(opts.Stdout, saved)
+}
+
+func runShell(opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "shell command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "info":
+		return runShellInfo(opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown shell command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runShellInfo(opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("shell info", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	info := shellInfo(opts.Version)
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: info, Metadata: opts.Version})
+	}
+	return writeShellInfoSummary(opts.Stdout, info)
 }
 
 func runEnv(ctx context.Context, opts Options, global globalFlags, args []string) int {
@@ -506,6 +840,7 @@ func runVersion(opts Options, global globalFlags, args []string) int {
 		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: opts.Version, Metadata: opts.Version})
 	}
 	_, _ = fmt.Fprintf(opts.Stdout, "InstantRepo %s\nCLI contract %s\n", opts.Version.AppVersion, opts.Version.CLIContractVersion)
+	_, _ = fmt.Fprintf(opts.Stdout, "Bridge contract %s\n", opts.Version.BridgeContractVersion)
 	if opts.Version.GitCommit != "" {
 		_, _ = fmt.Fprintf(opts.Stdout, "Git commit %s\n", opts.Version.GitCommit)
 	}
@@ -902,6 +1237,43 @@ func writeEnvDraftSummary(w io.Writer, draft domain.EnvDraft) int {
 	}
 	_, _ = fmt.Fprintf(w, "Service credentials: %d\n", serviceCredentials)
 	_, _ = fmt.Fprintf(w, "Action needed: %d\n", actionNeeded)
+	return 0
+}
+
+func writeContributionSettingsSummary(w io.Writer, resp domain.EnvContributionSettingsResponse) int {
+	_, _ = fmt.Fprintf(w, "Public env patterns: %t\n", resp.Settings.PublicEnvPatternsEnabled)
+	_, _ = fmt.Fprintf(w, "Private/local env patterns: %t\n", resp.Settings.PrivateLocalEnvPatternsEnabled)
+	_, _ = fmt.Fprintf(w, "Consent shown: %t\n", resp.Settings.ConsentShown)
+	_, _ = fmt.Fprintf(w, "Queued contributions: %d\n", resp.Queue.Count)
+	return 0
+}
+
+func writeAIEnvReviewSettingsSummary(w io.Writer, settings domain.AIEnvReviewSettings) int {
+	_, _ = fmt.Fprintf(w, "AI Env Review enabled: %t\n", settings.Enabled)
+	return 0
+}
+
+func shellInfo(version VersionInfo) map[string]string {
+	info := map[string]string{
+		"shell":                 "cli",
+		"frontend":              "none",
+		"backend":               "go-service-layer",
+		"adapter":               "command",
+		"appVersion":            version.AppVersion,
+		"cliContractVersion":    version.CLIContractVersion,
+		"bridgeContractVersion": version.BridgeContractVersion,
+	}
+	if strings.TrimSpace(version.GitCommit) != "" {
+		info["gitCommit"] = version.GitCommit
+	}
+	return info
+}
+
+func writeShellInfoSummary(w io.Writer, info map[string]string) int {
+	_, _ = fmt.Fprintf(w, "Shell: %s\n", fallbackText(info["shell"], "unknown"))
+	_, _ = fmt.Fprintf(w, "Backend: %s\n", fallbackText(info["backend"], "unknown"))
+	_, _ = fmt.Fprintf(w, "CLI contract: %s\n", info["cliContractVersion"])
+	_, _ = fmt.Fprintf(w, "Bridge contract: %s\n", info["bridgeContractVersion"])
 	return 0
 }
 

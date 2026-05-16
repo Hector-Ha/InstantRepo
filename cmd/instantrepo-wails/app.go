@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"instantrepo/internal/contract"
 	"instantrepo/internal/domain"
 	"instantrepo/internal/service"
 
@@ -254,10 +255,11 @@ func (a *App) ExecuteStep(repoURL, localPath, stepID string, approveRisky bool) 
 
 func (a *App) ShellInfo() map[string]string {
 	return map[string]string{
-		"shell":    "wails",
-		"frontend": "react",
-		"backend":  "go-service-layer",
-		"adapter":  "pending",
+		"shell":                 "wails",
+		"frontend":              "react",
+		"backend":               "go-service-layer",
+		"adapter":               "pending",
+		"bridgeContractVersion": contract.BridgeContractVersion,
 	}
 }
 

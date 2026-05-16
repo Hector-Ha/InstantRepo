@@ -21,3 +21,16 @@ func TestNewAppSurfacesInvalidAppDataOverride(t *testing.T) {
 		t.Fatalf("expected app data error, got %v", err)
 	}
 }
+
+func TestShellInfoExposesBridgeContractVersion(t *testing.T) {
+	app := &App{}
+
+	info := app.ShellInfo()
+
+	if info["shell"] != "wails" {
+		t.Fatalf("shell = %q", info["shell"])
+	}
+	if info["bridgeContractVersion"] == "" {
+		t.Fatalf("missing bridge contract version: %+v", info)
+	}
+}

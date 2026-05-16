@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import {
+  bridgeContractOutdatedMessage,
   createDesktopApi,
   desktopSessionUnavailableMessage,
+  expectedBridgeContractVersion,
   getDesktopApp,
+  missingBridgeContractMessage,
 } from "./src/desktopApi";
 
 test("desktop API reports missing Wails bridge with user-facing message", () => {
@@ -14,6 +17,9 @@ test("desktop API calls Wails bridge when it exists", async () => {
     go: {
       main: {
         App: {
+          ShellInfo: async () => ({
+            bridgeContractVersion: expectedBridgeContractVersion,
+          }),
           ListInstalledRepos: async () => ({ repos: [] }),
           GenerateEnvDraft: async () => ({ repoPath: "C:\\repo", targets: [] }),
           ListEnvVaultEntries: async () => ({ entries: [] }),
@@ -60,4 +66,54 @@ test("desktop API calls Wails bridge when it exists", async () => {
   await expect(api.ClearEnvContributionQueue()).resolves.toMatchObject({
     queue: { count: 0 },
   });
+});
+
+test("desktop API reports missing bridge contract metadata", async () => {
+  const api = createDesktopApi({
+    go: {
+      main: {
+        App: {
+          ShellInfo: async () => ({}),
+          ListInstalledRepos: async () => ({ repos: [] }),
+        },
+      },
+    },
+  });
+
+  await expect(api.ListInstalledRepos()).rejects.toThrow(
+    missingBridgeContractMessage,
+  );
+});
+
+test("desktop API reports missing ShellInfo bridge method", async () => {
+  const api = createDesktopApi({
+    go: {
+      main: {
+        App: {
+          ListInstalledRepos: async () => ({ repos: [] }),
+        },
+      },
+    },
+  });
+
+  await expect(api.ListInstalledRepos()).rejects.toThrow(
+    missingBridgeContractMessage,
+  );
+});
+
+test("desktop API reports outdated bridge contract metadata", async () => {
+  const api = createDesktopApi({
+    go: {
+      main: {
+        App: {
+          ShellInfo: async () => ({ bridgeContractVersion: "old" }),
+          ListInstalledRepos: async () => ({ repos: [] }),
+        },
+      },
+    },
+  });
+
+  await expect(api.ListInstalledRepos()).rejects.toThrow(
+    bridgeContractOutdatedMessage("old"),
+  );
 });

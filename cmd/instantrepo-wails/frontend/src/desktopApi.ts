@@ -19,6 +19,12 @@ import type {
 
 export const desktopSessionUnavailableMessage =
   "Desktop controls are unavailable in this browser session. Open the InstantRepo desktop window to use this action.";
+export const expectedBridgeContractVersion = "2026-05-bridge-1";
+export const missingBridgeContractMessage =
+  "Desktop controls are unavailable because bridge contract metadata is missing. Update InstantRepo and reload the desktop window.";
+export function bridgeContractOutdatedMessage(actual: string) {
+  return `Desktop controls are unavailable because bridge contract ${actual} is outdated. Expected ${expectedBridgeContractVersion}. Update InstantRepo and reload the desktop window.`;
+}
 
 export interface DesktopAppBridge {
   AIEnvReviewSettings(): Promise<AIEnvReviewSettings>;
@@ -68,7 +74,7 @@ export interface DesktopAppBridge {
   SaveEnvVaultCredential(
     req: EnvVaultSaveRequest,
   ): Promise<EnvVaultSaveResponse>;
-  ShellInfo(): Promise<unknown>;
+  ShellInfo(): Promise<Record<string, string>>;
   SuppressEnvVaultPrompt(suppression: {
     repoPath: string;
     targetRelativePath: string;
@@ -123,9 +129,60 @@ function getDesktopMethod<K extends keyof DesktopAppBridge>(
   return method.bind(app) as DesktopAppBridge[K];
 }
 
+function bridgeContractVersionFrom(info: unknown) {
+  if (!info || typeof info !== "object") {
+    return "";
+  }
+  const version = (info as { bridgeContractVersion?: unknown })
+    .bridgeContractVersion;
+  return typeof version === "string" ? version.trim() : "";
+}
+
+async function verifyBridgeContract(
+  source: DesktopBridgeSource | undefined,
+) {
+  const app = getDesktopApp(source);
+  if (typeof app.ShellInfo !== "function") {
+    throw new Error(missingBridgeContractMessage);
+  }
+  const info = await app.ShellInfo();
+  const actual = bridgeContractVersionFrom(info);
+  if (!actual) {
+    throw new Error(missingBridgeContractMessage);
+  }
+  if (actual !== expectedBridgeContractVersion) {
+    throw new Error(bridgeContractOutdatedMessage(actual));
+  }
+}
+
+async function invokeDesktopMethod<K extends keyof DesktopAppBridge>(
+  source: DesktopBridgeSource | undefined,
+  methodName: K,
+  args: Parameters<DesktopAppBridge[K]>,
+  checkBridge: boolean,
+): Promise<Awaited<ReturnType<DesktopAppBridge[K]>>> {
+  if (checkBridge) {
+    await verifyBridgeContract(source);
+  }
+  const method = getDesktopMethod(source, methodName) as (
+    ...args: Parameters<DesktopAppBridge[K]>
+  ) => ReturnType<DesktopAppBridge[K]>;
+  return await method(...args);
+}
+
 export function createDesktopApi(source?: DesktopBridgeSource) {
-  const call = <K extends keyof DesktopAppBridge>(methodName: K) =>
-    getDesktopMethod(source ?? currentWindow(), methodName);
+  const call =
+    <K extends keyof DesktopAppBridge>(
+      methodName: K,
+      checkBridge = true,
+    ) =>
+    (...args: Parameters<DesktopAppBridge[K]>) =>
+      invokeDesktopMethod(
+        source ?? currentWindow(),
+        methodName,
+        args,
+        checkBridge,
+      ) as ReturnType<DesktopAppBridge[K]>;
 
   return {
     AIEnvReviewSettings() {
@@ -206,7 +263,7 @@ export function createDesktopApi(source?: DesktopBridgeSource) {
       return call("SaveEnvVaultCredential")(req);
     },
     ShellInfo() {
-      return call("ShellInfo")();
+      return call("ShellInfo", false)();
     },
     SuppressEnvVaultPrompt(suppression: {
       repoPath: string;

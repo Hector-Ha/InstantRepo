@@ -20,9 +20,10 @@ func TestVersionCommandJSONReturnsContractMetadata(t *testing.T) {
 		Stdout: &stdout,
 		Stderr: &bytes.Buffer{},
 		Version: VersionInfo{
-			AppVersion:         "1.2.3",
-			GitCommit:          "abc123",
-			CLIContractVersion: "2026-05-issue-37",
+			AppVersion:            "1.2.3",
+			GitCommit:             "abc123",
+			CLIContractVersion:    "2026-05-issue-40",
+			BridgeContractVersion: "2026-05-bridge-1",
 		},
 		NewApp: func(AppConfig) (App, func() error, error) {
 			t.Fatal("version must not create app service")
@@ -44,8 +45,11 @@ func TestVersionCommandJSONReturnsContractMetadata(t *testing.T) {
 	if !payload.OK {
 		t.Fatalf("ok = false")
 	}
-	if payload.Data.CLIContractVersion != "2026-05-issue-37" {
+	if payload.Data.CLIContractVersion != "2026-05-issue-40" {
 		t.Fatalf("data contract = %q", payload.Data.CLIContractVersion)
+	}
+	if payload.Data.BridgeContractVersion != "2026-05-bridge-1" || payload.Metadata.BridgeContractVersion != "2026-05-bridge-1" {
+		t.Fatalf("bridge metadata = data:%q metadata:%q", payload.Data.BridgeContractVersion, payload.Metadata.BridgeContractVersion)
 	}
 	if payload.Metadata.AppVersion != "1.2.3" || payload.Metadata.GitCommit != "abc123" {
 		t.Fatalf("metadata = %+v", payload.Metadata)
@@ -59,9 +63,10 @@ func TestVersionCommandHumanOutputIsDefault(t *testing.T) {
 		Stdout: &stdout,
 		Stderr: &bytes.Buffer{},
 		Version: VersionInfo{
-			AppVersion:         "1.2.3",
-			GitCommit:          "abc123",
-			CLIContractVersion: "2026-05-issue-37",
+			AppVersion:            "1.2.3",
+			GitCommit:             "abc123",
+			CLIContractVersion:    "2026-05-issue-40",
+			BridgeContractVersion: "2026-05-bridge-1",
 		},
 		NewApp: func(AppConfig) (App, func() error, error) {
 			t.Fatal("version must not create app service")
@@ -73,11 +78,382 @@ func TestVersionCommandHumanOutputIsDefault(t *testing.T) {
 		t.Fatalf("exit code = %d", exitCode)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "InstantRepo 1.2.3") || !strings.Contains(output, "CLI contract 2026-05-issue-37") {
+	if !strings.Contains(output, "InstantRepo 1.2.3") || !strings.Contains(output, "CLI contract 2026-05-issue-40") || !strings.Contains(output, "Bridge contract 2026-05-bridge-1") {
 		t.Fatalf("output = %q", output)
 	}
 	if strings.Contains(output, `"ok"`) {
 		t.Fatalf("human output should not be JSON: %s", output)
+	}
+}
+
+func TestSettingsContributionGetJSONReturnsDomainResponse(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		envContributionSettingsResp: domain.EnvContributionSettingsResponse{
+			Settings: domain.EnvContributionSettings{
+				PublicEnvPatternsEnabled:       true,
+				PrivateLocalEnvPatternsEnabled: false,
+				ConsentShown:                   true,
+			},
+			Queue: domain.EnvContributionQueueStatus{Count: 2},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"settings", "contribution", "get", "--json"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if !fake.envContributionSettingsCalled {
+		t.Fatalf("EnvContributionSettings was not called")
+	}
+	var payload struct {
+		OK   bool                                   `json:"ok"`
+		Data domain.EnvContributionSettingsResponse `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || !payload.Data.Settings.PublicEnvPatternsEnabled || payload.Data.Queue.Count != 2 {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestSettingsContributionSaveFileAndStdinJSONReturnDomainResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		in   string
+	}{
+		{name: "file", args: []string{"settings", "contribution", "save", "--file", "", "--json"}},
+		{name: "stdin", args: []string{"settings", "contribution", "save", "--stdin", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := domain.EnvContributionSettings{
+				PublicEnvPatternsEnabled:       false,
+				PrivateLocalEnvPatternsEnabled: true,
+				ConsentShown:                   true,
+			}
+			raw, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatalf("marshal settings: %v", err)
+			}
+			args := append([]string(nil), tc.args...)
+			stdin := strings.NewReader("")
+			if tc.name == "file" {
+				inputPath := filepath.Join(t.TempDir(), "settings.json")
+				if err := os.WriteFile(inputPath, raw, 0o600); err != nil {
+					t.Fatalf("write settings: %v", err)
+				}
+				args[4] = inputPath
+			} else {
+				stdin = strings.NewReader(string(raw))
+			}
+			var stdout bytes.Buffer
+			fake := &fakeApp{
+				saveEnvContributionSettingsResp: domain.EnvContributionSettingsResponse{
+					Settings: settings,
+					Queue:    domain.EnvContributionQueueStatus{Count: 0},
+				},
+			}
+
+			exitCode := Run(context.Background(), Options{
+				Args:    args,
+				Stdin:   stdin,
+				Stdout:  &stdout,
+				Stderr:  &bytes.Buffer{},
+				Version: defaultTestVersion(),
+				NewApp: func(config AppConfig) (App, func() error, error) {
+					return fake, nil, nil
+				},
+			})
+
+			if exitCode != 0 {
+				t.Fatalf("exit code = %d", exitCode)
+			}
+			if !fake.saveEnvContributionSettingsCalled || !fake.saveEnvContributionSettingsArg.PrivateLocalEnvPatternsEnabled {
+				t.Fatalf("save arg = %+v called=%t", fake.saveEnvContributionSettingsArg, fake.saveEnvContributionSettingsCalled)
+			}
+			var payload struct {
+				OK   bool                                   `json:"ok"`
+				Data domain.EnvContributionSettingsResponse `json:"data"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+				t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+			}
+			if !payload.OK || !payload.Data.Settings.PrivateLocalEnvPatternsEnabled {
+				t.Fatalf("payload = %+v", payload)
+			}
+		})
+	}
+}
+
+func TestSettingsContributionConsentAndClearQueueJSONReturnDomainResponse(t *testing.T) {
+	t.Run("consent", func(t *testing.T) {
+		var stdout bytes.Buffer
+		fake := &fakeApp{
+			recordEnvContributionConsentResp: domain.EnvContributionSettingsResponse{
+				Settings: domain.EnvContributionSettings{
+					PublicEnvPatternsEnabled: true,
+					ConsentShown:             true,
+				},
+				Queue: domain.EnvContributionQueueStatus{Count: 0},
+			},
+		}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"settings", "contribution", "consent", "--public-enabled", "true", "--json"},
+			Stdout:  &stdout,
+			Stderr:  &bytes.Buffer{},
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d", exitCode)
+		}
+		if !fake.recordEnvContributionConsentCalled || !fake.recordEnvContributionConsentArg {
+			t.Fatalf("consent arg = %t called=%t", fake.recordEnvContributionConsentArg, fake.recordEnvContributionConsentCalled)
+		}
+		var payload struct {
+			Data domain.EnvContributionSettingsResponse `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+		if !payload.Data.Settings.ConsentShown {
+			t.Fatalf("payload = %+v", payload)
+		}
+	})
+
+	t.Run("clear queue", func(t *testing.T) {
+		var stdout bytes.Buffer
+		fake := &fakeApp{
+			clearEnvContributionQueueResp: domain.EnvContributionSettingsResponse{
+				Settings: domain.EnvContributionSettings{ConsentShown: true},
+				Queue:    domain.EnvContributionQueueStatus{Count: 0},
+			},
+		}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"settings", "contribution", "clear-queue", "--json"},
+			Stdout:  &stdout,
+			Stderr:  &bytes.Buffer{},
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d", exitCode)
+		}
+		if !fake.clearEnvContributionQueueCalled {
+			t.Fatalf("ClearEnvContributionQueue was not called")
+		}
+		var payload struct {
+			Data domain.EnvContributionSettingsResponse `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+		if payload.Data.Queue.Count != 0 {
+			t.Fatalf("payload = %+v", payload)
+		}
+	})
+}
+
+func TestSettingsAIEnvReviewGetAndSaveJSONReturnDomainResponse(t *testing.T) {
+	t.Run("get", func(t *testing.T) {
+		var stdout bytes.Buffer
+		fake := &fakeApp{aiEnvReviewSettingsResp: domain.AIEnvReviewSettings{Enabled: true}}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"settings", "ai-env-review", "get", "--json"},
+			Stdout:  &stdout,
+			Stderr:  &bytes.Buffer{},
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d", exitCode)
+		}
+		if !fake.aiEnvReviewSettingsCalled {
+			t.Fatalf("AIEnvReviewSettings was not called")
+		}
+		var payload struct {
+			Data domain.AIEnvReviewSettings `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+		if !payload.Data.Enabled {
+			t.Fatalf("payload = %+v", payload)
+		}
+	})
+
+	t.Run("save", func(t *testing.T) {
+		settings := domain.AIEnvReviewSettings{Enabled: true}
+		raw, err := json.Marshal(settings)
+		if err != nil {
+			t.Fatalf("marshal settings: %v", err)
+		}
+		var stdout bytes.Buffer
+		fake := &fakeApp{saveAIEnvReviewSettingsResp: settings}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"settings", "ai-env-review", "save", "--stdin", "--json"},
+			Stdin:   strings.NewReader(string(raw)),
+			Stdout:  &stdout,
+			Stderr:  &bytes.Buffer{},
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d", exitCode)
+		}
+		if !fake.saveAIEnvReviewSettingsCalled || !fake.saveAIEnvReviewSettingsArg.Enabled {
+			t.Fatalf("save arg = %+v called=%t", fake.saveAIEnvReviewSettingsArg, fake.saveAIEnvReviewSettingsCalled)
+		}
+		var payload struct {
+			Data domain.AIEnvReviewSettings `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+		if !payload.Data.Enabled {
+			t.Fatalf("payload = %+v", payload)
+		}
+	})
+}
+
+func TestShellInfoJSONReturnsBridgeMetadata(t *testing.T) {
+	var stdout bytes.Buffer
+
+	exitCode := Run(context.Background(), Options{
+		Args:   []string{"shell", "info", "--json"},
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Version: VersionInfo{
+			AppVersion:            "1.2.3",
+			GitCommit:             "abc123",
+			CLIContractVersion:    "2026-05-issue-40",
+			BridgeContractVersion: "2026-05-bridge-1",
+		},
+		NewApp: func(AppConfig) (App, func() error, error) {
+			t.Fatal("shell info must not create app service")
+			return nil, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	var payload struct {
+		OK   bool              `json:"ok"`
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Data["shell"] != "cli" || payload.Data["bridgeContractVersion"] != "2026-05-bridge-1" || payload.Data["cliContractVersion"] != "2026-05-issue-40" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestSettingsPassesIsolatedAppDataAndCreatesDirectory(t *testing.T) {
+	appDataDir := filepath.Join(t.TempDir(), "app-data")
+	var gotConfig AppConfig
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"settings", "contribution", "get", "--app-data-dir", appDataDir, "--json"},
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			gotConfig = config
+			return &fakeApp{}, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if gotConfig.AppDataDir != filepath.Clean(appDataDir) {
+		t.Fatalf("app data dir = %q, want %q", gotConfig.AppDataDir, filepath.Clean(appDataDir))
+	}
+	if _, err := os.Stat(appDataDir); err != nil {
+		t.Fatalf("app data dir not created: %v", err)
+	}
+}
+
+func TestSettingsCommandsPersistWithIsolatedAppData(t *testing.T) {
+	appDataDir := filepath.Join(t.TempDir(), "app-data")
+	runJSON := func(args []string, stdin string, out any) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		exitCode := Run(context.Background(), Options{
+			Args:    append(args, "--app-data-dir", appDataDir, "--json"),
+			Stdin:   strings.NewReader(stdin),
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			Version: defaultTestVersion(),
+		})
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d stderr=%s", exitCode, stderr.String())
+		}
+		if err := json.Unmarshal(stdout.Bytes(), out); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+	}
+
+	settingsJSON := `{"publicEnvPatternsEnabled":false,"privateLocalEnvPatternsEnabled":true,"consentShown":true}`
+	var savePayload struct {
+		Data domain.EnvContributionSettingsResponse `json:"data"`
+	}
+	runJSON([]string{"settings", "contribution", "save", "--stdin"}, settingsJSON, &savePayload)
+	if savePayload.Data.Settings.PublicEnvPatternsEnabled || !savePayload.Data.Settings.PrivateLocalEnvPatternsEnabled || !savePayload.Data.Settings.ConsentShown {
+		t.Fatalf("saved contribution settings = %+v", savePayload.Data.Settings)
+	}
+
+	var getPayload struct {
+		Data domain.EnvContributionSettingsResponse `json:"data"`
+	}
+	runJSON([]string{"settings", "contribution", "get"}, "", &getPayload)
+	if getPayload.Data.Settings.PublicEnvPatternsEnabled || !getPayload.Data.Settings.PrivateLocalEnvPatternsEnabled || !getPayload.Data.Settings.ConsentShown {
+		t.Fatalf("persisted contribution settings = %+v", getPayload.Data.Settings)
+	}
+
+	var aiSavePayload struct {
+		Data domain.AIEnvReviewSettings `json:"data"`
+	}
+	runJSON([]string{"settings", "ai-env-review", "save", "--stdin"}, `{"enabled":true}`, &aiSavePayload)
+	if !aiSavePayload.Data.Enabled {
+		t.Fatalf("saved AI Env Review settings = %+v", aiSavePayload.Data)
+	}
+
+	var aiGetPayload struct {
+		Data domain.AIEnvReviewSettings `json:"data"`
+	}
+	runJSON([]string{"settings", "ai-env-review", "get"}, "", &aiGetPayload)
+	if !aiGetPayload.Data.Enabled {
+		t.Fatalf("persisted AI Env Review settings = %+v", aiGetPayload.Data)
 	}
 }
 
@@ -1362,27 +1738,42 @@ func TestAppDataDirRejectsRepoRootWhenLaunchedOutsideSourceTree(t *testing.T) {
 }
 
 type fakeApp struct {
-	analyzeReq           domain.AnalyzeRequest
-	analyzeResp          domain.AnalyzeResponse
-	preflightReq         domain.ClonePreflightRequest
-	preflightResp        domain.ClonePreflightResponse
-	importRepoURL        string
-	importDestination    string
-	importResp           domain.AnalyzeResponse
-	importErr            error
-	executeReq           domain.ExecuteRequest
-	executeResp          domain.ExecuteResponse
-	executeErr           error
-	generateEnvDraftPath string
-	envDraftResp         domain.EnvDraft
-	saveStructuredPath   string
-	saveStructuredDraft  domain.EnvDraft
-	saveStructuredResp   domain.ExecuteResponse
-	saveStructuredErr    error
-	saveRawPath          string
-	saveRawContent       string
-	saveRawResp          domain.ExecuteResponse
-	saveRawErr           error
+	analyzeReq                         domain.AnalyzeRequest
+	analyzeResp                        domain.AnalyzeResponse
+	preflightReq                       domain.ClonePreflightRequest
+	preflightResp                      domain.ClonePreflightResponse
+	importRepoURL                      string
+	importDestination                  string
+	importResp                         domain.AnalyzeResponse
+	importErr                          error
+	executeReq                         domain.ExecuteRequest
+	executeResp                        domain.ExecuteResponse
+	executeErr                         error
+	generateEnvDraftPath               string
+	envDraftResp                       domain.EnvDraft
+	saveStructuredPath                 string
+	saveStructuredDraft                domain.EnvDraft
+	saveStructuredResp                 domain.ExecuteResponse
+	saveStructuredErr                  error
+	saveRawPath                        string
+	saveRawContent                     string
+	saveRawResp                        domain.ExecuteResponse
+	saveRawErr                         error
+	envContributionSettingsCalled      bool
+	envContributionSettingsResp        domain.EnvContributionSettingsResponse
+	saveEnvContributionSettingsCalled  bool
+	saveEnvContributionSettingsArg     domain.EnvContributionSettings
+	saveEnvContributionSettingsResp    domain.EnvContributionSettingsResponse
+	recordEnvContributionConsentCalled bool
+	recordEnvContributionConsentArg    bool
+	recordEnvContributionConsentResp   domain.EnvContributionSettingsResponse
+	clearEnvContributionQueueCalled    bool
+	clearEnvContributionQueueResp      domain.EnvContributionSettingsResponse
+	aiEnvReviewSettingsCalled          bool
+	aiEnvReviewSettingsResp            domain.AIEnvReviewSettings
+	saveAIEnvReviewSettingsCalled      bool
+	saveAIEnvReviewSettingsArg         domain.AIEnvReviewSettings
+	saveAIEnvReviewSettingsResp        domain.AIEnvReviewSettings
 }
 
 func (f *fakeApp) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
@@ -1435,10 +1826,44 @@ func (f *fakeApp) SaveRawEnv(ctx context.Context, localPath, content string) (do
 	return f.saveRawResp, nil
 }
 
+func (f *fakeApp) EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettingsResponse, error) {
+	f.envContributionSettingsCalled = true
+	return f.envContributionSettingsResp, nil
+}
+
+func (f *fakeApp) SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) (domain.EnvContributionSettingsResponse, error) {
+	f.saveEnvContributionSettingsCalled = true
+	f.saveEnvContributionSettingsArg = settings
+	return f.saveEnvContributionSettingsResp, nil
+}
+
+func (f *fakeApp) RecordEnvContributionConsent(ctx context.Context, publicEnabled bool) (domain.EnvContributionSettingsResponse, error) {
+	f.recordEnvContributionConsentCalled = true
+	f.recordEnvContributionConsentArg = publicEnabled
+	return f.recordEnvContributionConsentResp, nil
+}
+
+func (f *fakeApp) ClearEnvContributionQueue(ctx context.Context) (domain.EnvContributionSettingsResponse, error) {
+	f.clearEnvContributionQueueCalled = true
+	return f.clearEnvContributionQueueResp, nil
+}
+
+func (f *fakeApp) AIEnvReviewSettings(ctx context.Context) (domain.AIEnvReviewSettings, error) {
+	f.aiEnvReviewSettingsCalled = true
+	return f.aiEnvReviewSettingsResp, nil
+}
+
+func (f *fakeApp) SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) (domain.AIEnvReviewSettings, error) {
+	f.saveAIEnvReviewSettingsCalled = true
+	f.saveAIEnvReviewSettingsArg = settings
+	return f.saveAIEnvReviewSettingsResp, nil
+}
+
 func defaultTestVersion() VersionInfo {
 	return VersionInfo{
-		AppVersion:         "dev",
-		GitCommit:          "",
-		CLIContractVersion: CLIContractVersion,
+		AppVersion:            "dev",
+		GitCommit:             "",
+		CLIContractVersion:    CLIContractVersion,
+		BridgeContractVersion: BridgeContractVersion,
 	}
 }

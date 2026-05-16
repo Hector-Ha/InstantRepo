@@ -56,9 +56,9 @@ The CLI mirror track covers:
 - installed repo history and credential-free diagnostics
 - Env Vault, contribution settings, AI Env Review settings, and bridge contract metadata
 
-Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. Env Draft generate/save mirror work in [#37](https://github.com/Hector-Ha/InstantRepo/issues/37) is done. The next public slice is [#40](https://github.com/Hector-Ha/InstantRepo/issues/40), which adds settings and bridge contract metadata commands.
+Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. Env Draft generate/save mirror work in [#37](https://github.com/Hector-Ha/InstantRepo/issues/37) is done. Settings and bridge metadata work in [#40](https://github.com/Hector-Ha/InstantRepo/issues/40) is done. The next public slice is [#38](https://github.com/Hector-Ha/InstantRepo/issues/38), which adds installed repo history and diagnostics commands.
 
-See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and remaining child issues [#37](https://github.com/Hector-Ha/InstantRepo/issues/37)-[#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
+See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and remaining child issues [#38](https://github.com/Hector-Ha/InstantRepo/issues/38), [#39](https://github.com/Hector-Ha/InstantRepo/issues/39), and [#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
 
 ## Project Shape
 
@@ -165,6 +165,48 @@ Save a raw `.env` for repos with one inferred env target:
 
 ```bash
 go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
+```
+
+Show shell and bridge contract metadata:
+
+```bash
+go run ./cmd/instantrepo shell info --json
+```
+
+Show Env Pattern Contribution settings:
+
+```bash
+go run ./cmd/instantrepo settings contribution get --json
+```
+
+Save Env Pattern Contribution settings:
+
+```bash
+go run ./cmd/instantrepo settings contribution save --file C:\path\to\settings.json --json
+```
+
+Record Env Pattern Contribution consent:
+
+```bash
+go run ./cmd/instantrepo settings contribution consent --public-enabled true --json
+```
+
+Clear queued Env Pattern Contribution records:
+
+```bash
+go run ./cmd/instantrepo settings contribution clear-queue --json
+```
+
+Show AI Env Review settings:
+
+```bash
+go run ./cmd/instantrepo settings ai-env-review get --json
+```
+
+Save AI Env Review settings:
+
+```bash
+go run ./cmd/instantrepo settings ai-env-review save --file C:\path\to\settings.json --json
 ```
 
 Legacy prepare `.env`:
@@ -275,14 +317,14 @@ Current CLI mirror roadmap:
 2. [#35 CLI foundation, JSON contract, and app-data isolation](https://github.com/Hector-Ha/InstantRepo/issues/35) is done.
 3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36) is done.
 4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37) is done.
-5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40)
+5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40) is done.
 6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38)
 7. [#39 Env Vault secret-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/39)
 8. [#41 CLI mirror and private QA convention docs](https://github.com/Hector-Ha/InstantRepo/issues/41)
 
 ## Next Work
 
-- Start #40 settings and bridge contract metadata CLI mirrors.
+- Start #38 installed repo history and diagnostics CLI mirrors.
 - Keep `.qa-local/` private and ignored; do not commit private QA harness files.
 - Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.
