@@ -1,0 +1,442 @@
+package command
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"instantrepo/internal/api"
+	"instantrepo/internal/domain"
+	"instantrepo/internal/service"
+	"instantrepo/internal/store"
+)
+
+const CLIContractVersion = "2026-05-issue-35"
+
+type VersionInfo struct {
+	AppVersion         string `json:"appVersion"`
+	GitCommit          string `json:"gitCommit,omitempty"`
+	CLIContractVersion string `json:"cliContractVersion"`
+}
+
+type Options struct {
+	Args    []string
+	Environ []string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Version VersionInfo
+	NewApp  func(AppConfig) (App, func() error, error)
+}
+
+type AppConfig struct {
+	AppDataDir string
+}
+
+type App interface {
+	Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error)
+	Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResponse, error)
+}
+
+type appWithServer struct {
+	app *service.AppService
+}
+
+func (a appWithServer) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
+	return a.app.Analyze(ctx, req)
+}
+
+func (a appWithServer) Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResponse, error) {
+	return a.app.Execute(ctx, req)
+}
+
+func Run(ctx context.Context, opts Options) int {
+	opts = withDefaults(opts)
+
+	global, remaining, err := parseGlobalFlags(opts.Args, opts.Environ)
+	if err != nil {
+		return writeCommandError(opts, err, global.JSON)
+	}
+	if err := validateAppDataDir(global.AppDataDir, global.TargetRepoPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, global.JSON)
+	}
+
+	if len(remaining) > 0 && !strings.HasPrefix(remaining[0], "-") {
+		return runSubcommand(ctx, opts, global, remaining)
+	}
+	return runLegacy(ctx, opts, global, remaining)
+}
+
+func withDefaults(opts Options) Options {
+	if opts.Stdout == nil {
+		opts.Stdout = os.Stdout
+	}
+	if opts.Stderr == nil {
+		opts.Stderr = os.Stderr
+	}
+	if opts.Environ == nil {
+		opts.Environ = os.Environ()
+	}
+	if opts.Version.AppVersion == "" {
+		opts.Version.AppVersion = "dev"
+	}
+	if opts.Version.CLIContractVersion == "" {
+		opts.Version.CLIContractVersion = CLIContractVersion
+	}
+	if opts.NewApp == nil {
+		opts.NewApp = newServiceApp
+	}
+	return opts
+}
+
+func runSubcommand(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	name := args[0]
+	switch name {
+	case "version":
+		return runVersion(opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown command %q", name),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runVersion(opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: opts.Version, Metadata: opts.Version})
+	}
+	_, _ = fmt.Fprintf(opts.Stdout, "InstantRepo %s\nCLI contract %s\n", opts.Version.AppVersion, opts.Version.CLIContractVersion)
+	if opts.Version.GitCommit != "" {
+		_, _ = fmt.Fprintf(opts.Stdout, "Git commit %s\n", opts.Version.GitCommit)
+	}
+	return 0
+}
+
+func runLegacy(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("instantrepo", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	serveAddr := fs.String("serve", "", "HTTP listen address, for example :8080")
+	repoURL := fs.String("repo", "", "GitHub repository URL to analyze")
+	localPath := fs.String("path", "", "Local repository path to analyze")
+	stepID := fs.String("step", "", "Plan step ID to execute after analysis")
+	approve := fs.Bool("approve", false, "Allow execution of risky steps that require approval")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, global.JSON)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, global.JSON)
+	}
+
+	if *repoURL == "" && *localPath == "" && *serveAddr == "" {
+		if !global.JSON {
+			_, _ = fmt.Fprintln(opts.Stderr, "usage: instantrepo [-serve addr] [-repo url | -path path] [-step id] [-approve]")
+			return 1
+		}
+		return writeCommandError(opts, commandError{
+			Code:    "missing_target",
+			Message: "repo URL, local path, or serve address is required",
+		}, global.JSON)
+	}
+
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, global.JSON)
+	}
+
+	if *serveAddr != "" {
+		svc, ok := app.(interface{ service() *service.AppService })
+		if !ok {
+			return writeCommandError(opts, commandError{Code: "server_unavailable", Message: "server requires AppService"}, global.JSON)
+		}
+		server := &http.Server{
+			Addr:              *serveAddr,
+			Handler:           api.NewServer(svc.service()),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		if err := server.ListenAndServe(); err != nil {
+			return writeCommandError(opts, commandError{Code: "server_failed", Message: err.Error()}, global.JSON)
+		}
+		return 0
+	}
+
+	enc := json.NewEncoder(opts.Stdout)
+	enc.SetIndent("", "  ")
+	if *stepID != "" {
+		resp, err := app.Execute(ctx, domain.ExecuteRequest{
+			RepoURL:      *repoURL,
+			LocalPath:    *localPath,
+			StepID:       *stepID,
+			ApproveRisky: *approve,
+		})
+		if err != nil {
+			return writeCommandError(opts, commandError{Code: "execute_failed", Message: err.Error()}, global.JSON)
+		}
+		if err := enc.Encode(resp); err != nil {
+			return writeCommandError(opts, commandError{Code: "encode_failed", Message: err.Error()}, global.JSON)
+		}
+		return 0
+	}
+
+	resp, err := app.Analyze(ctx, domain.AnalyzeRequest{
+		RepoURL:   *repoURL,
+		LocalPath: *localPath,
+	})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "analyze_failed", Message: err.Error()}, global.JSON)
+	}
+	if err := enc.Encode(resp); err != nil {
+		return writeCommandError(opts, commandError{Code: "encode_failed", Message: err.Error()}, global.JSON)
+	}
+	return 0
+}
+
+type serviceApp struct {
+	*service.AppService
+}
+
+func (a serviceApp) service() *service.AppService {
+	return a.AppService
+}
+
+func newServiceApp(config AppConfig) (App, func() error, error) {
+	if strings.TrimSpace(config.AppDataDir) == "" {
+		app, err := service.NewAppServiceWithDefaultStore()
+		if err != nil {
+			return nil, nil, err
+		}
+		return serviceApp{AppService: app}, nil, nil
+	}
+	dbPath, err := store.DatabasePathForAppDataDir(config.AppDataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	sqliteStore, err := store.OpenSQLiteStore(dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return serviceApp{AppService: service.NewAppServiceWithInstalledRepoStore(sqliteStore)}, sqliteStore.Close, nil
+}
+
+type globalFlags struct {
+	JSON           bool
+	AppDataDir     string
+	TargetRepoPath string
+}
+
+func parseGlobalFlags(args, environ []string) (globalFlags, []string, error) {
+	global := globalFlags{AppDataDir: envValue(environ, "INSTANTREPO_APP_DATA_DIR")}
+	var remaining []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			global.JSON = true
+		case arg == "--app-data-dir":
+			i++
+			if i >= len(args) {
+				return global, nil, commandError{Code: "invalid_arguments", Message: "--app-data-dir requires a value"}
+			}
+			global.AppDataDir = args[i]
+		case strings.HasPrefix(arg, "--app-data-dir="):
+			global.AppDataDir = strings.TrimPrefix(arg, "--app-data-dir=")
+		case arg == "-path":
+			remaining = append(remaining, arg)
+			i++
+			if i >= len(args) {
+				return global, nil, commandError{Code: "invalid_arguments", Message: "-path requires a value"}
+			}
+			global.TargetRepoPath = args[i]
+			remaining = append(remaining, args[i])
+		case strings.HasPrefix(arg, "-path="):
+			global.TargetRepoPath = strings.TrimPrefix(arg, "-path=")
+			remaining = append(remaining, arg)
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
+	return global, remaining, nil
+}
+
+func envValue(environ []string, key string) string {
+	for _, item := range environ {
+		name, value, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(name, key) {
+			return value
+		}
+	}
+	return ""
+}
+
+func hasJSONFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateAppDataDir(appDataDir, targetRepoPath string) error {
+	appDataDir = strings.TrimSpace(appDataDir)
+	if appDataDir == "" {
+		return nil
+	}
+	if !filepath.IsAbs(appDataDir) {
+		return fmt.Errorf("app data dir must be absolute")
+	}
+	cleanAppData, err := filepath.Abs(appDataDir)
+	if err != nil {
+		return fmt.Errorf("resolve app data dir: %w", err)
+	}
+	cleanAppData = filepath.Clean(cleanAppData)
+	if filepath.Dir(cleanAppData) == cleanAppData {
+		return fmt.Errorf("app data dir must not be filesystem root")
+	}
+	if volume := filepath.VolumeName(cleanAppData); volume != "" && strings.EqualFold(cleanAppData, volume+string(os.PathSeparator)) {
+		return fmt.Errorf("app data dir must not be drive root")
+	}
+	homeDir, err := os.UserHomeDir()
+	if err == nil && samePath(cleanAppData, homeDir) {
+		return fmt.Errorf("app data dir must not be home dir")
+	}
+	repoRoot, err := currentSourceRepoRoot()
+	if err == nil && samePath(cleanAppData, repoRoot) {
+		return fmt.Errorf("app data dir must not be repo root")
+	}
+	if strings.TrimSpace(targetRepoPath) != "" {
+		repoAbs, err := filepath.Abs(targetRepoPath)
+		if err != nil {
+			return fmt.Errorf("resolve target repo path: %w", err)
+		}
+		repoAbs = filepath.Clean(repoAbs)
+		if samePath(cleanAppData, repoAbs) || isPathInside(cleanAppData, repoAbs) {
+			return fmt.Errorf("app data dir must not be target repo or inside target repo")
+		}
+	}
+	if _, err := store.DatabasePathForAppDataDir(cleanAppData); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cleanAppData, 0o700); err != nil {
+		return fmt.Errorf("create app data dir: %w", err)
+	}
+	return nil
+}
+
+func cleanAppDataDir(appDataDir string) string {
+	if strings.TrimSpace(appDataDir) == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(appDataDir)
+	if err != nil {
+		return filepath.Clean(appDataDir)
+	}
+	return filepath.Clean(abs)
+}
+
+func currentSourceRepoRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Clean(wd)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
+}
+
+func samePath(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA == nil {
+		a = aa
+	}
+	if errB == nil {
+		b = bb
+	}
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+func isPathInside(path, parent string) bool {
+	rel, err := filepath.Rel(parent, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+type commandError struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+func (e commandError) Error() string {
+	return e.Message
+}
+
+type successEnvelope struct {
+	OK       bool        `json:"ok"`
+	Data     any         `json:"data"`
+	Metadata VersionInfo `json:"metadata"`
+}
+
+type errorEnvelope struct {
+	OK       bool         `json:"ok"`
+	Error    commandError `json:"error"`
+	Metadata VersionInfo  `json:"metadata"`
+}
+
+func writeCommandError(opts Options, err error, jsonOut bool) int {
+	var cmdErr commandError
+	if !errors.As(err, &cmdErr) {
+		cmdErr = commandError{Code: "command_failed", Message: err.Error()}
+	}
+	if jsonOut {
+		if code := writeJSON(opts.Stderr, errorEnvelope{OK: false, Error: cmdErr, Metadata: opts.Version}); code != 0 {
+			return code
+		}
+	} else {
+		_, _ = fmt.Fprintln(opts.Stderr, cmdErr.Message)
+	}
+	return 1
+}
+
+func writeJSON(w io.Writer, payload any) int {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(payload); err != nil {
+		return 1
+	}
+	return 0
+}

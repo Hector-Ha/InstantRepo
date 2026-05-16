@@ -78,11 +78,19 @@ func (s *AppService) SaveAIEnvReviewSettings(ctx context.Context, settings domai
 }
 
 func NewAppService() *AppService {
-	installedRepos, err := store.OpenDefaultSQLiteStore()
+	app, err := NewAppServiceWithDefaultStore()
 	if err != nil {
 		return NewAppServiceWithInstalledRepoStore(nil)
 	}
-	return NewAppServiceWithInstalledRepoStore(installedRepos)
+	return app
+}
+
+func NewAppServiceWithDefaultStore() (*AppService, error) {
+	installedRepos, err := store.OpenDefaultSQLiteStore()
+	if err != nil {
+		return nil, err
+	}
+	return NewAppServiceWithInstalledRepoStore(installedRepos), nil
 }
 
 func NewAppServiceWithInstalledRepoStore(installedRepos InstalledRepoStore) *AppService {

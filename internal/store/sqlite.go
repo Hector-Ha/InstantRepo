@@ -34,11 +34,74 @@ type SQLiteStore struct {
 }
 
 func DefaultDatabasePath() (string, error) {
+	if appDataDir := appDataDirEnvValue(os.Environ()); strings.TrimSpace(appDataDir) != "" {
+		return DatabasePathForAppDataDir(appDataDir)
+	}
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user config dir: %w", err)
 	}
 	return filepath.Join(configDir, "InstantRepo", "instantrepo.db"), nil
+}
+
+func DatabasePathForAppDataDir(appDataDir string) (string, error) {
+	appDataDir = strings.TrimSpace(appDataDir)
+	if appDataDir == "" {
+		return "", fmt.Errorf("app data dir is required")
+	}
+	if !filepath.IsAbs(appDataDir) {
+		return "", fmt.Errorf("app data dir must be absolute")
+	}
+	cleanAppData, err := filepath.Abs(appDataDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve app data dir: %w", err)
+	}
+	cleanAppData = filepath.Clean(cleanAppData)
+	if filepath.Dir(cleanAppData) == cleanAppData {
+		return "", fmt.Errorf("app data dir must not be filesystem root")
+	}
+	if volume := filepath.VolumeName(cleanAppData); volume != "" && strings.EqualFold(cleanAppData, volume+string(os.PathSeparator)) {
+		return "", fmt.Errorf("app data dir must not be drive root")
+	}
+	homeDir, err := os.UserHomeDir()
+	if err == nil && samePath(cleanAppData, homeDir) {
+		return "", fmt.Errorf("app data dir must not be home dir")
+	}
+	if hasRepoRootMarker(cleanAppData) {
+		return "", fmt.Errorf("app data dir must not be repo root")
+	}
+	return filepath.Join(cleanAppData, "instantrepo.db"), nil
+}
+
+func hasRepoRootMarker(path string) bool {
+	for _, marker := range []string{".git", "go.mod"} {
+		if _, err := os.Stat(filepath.Join(path, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func appDataDirEnvValue(environ []string) string {
+	for _, item := range environ {
+		name, value, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(name, "INSTANTREPO_APP_DATA_DIR") {
+			return value
+		}
+	}
+	return ""
+}
+
+func samePath(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA == nil {
+		a = aa
+	}
+	if errB == nil {
+		b = bb
+	}
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 func OpenDefaultSQLiteStore() (*SQLiteStore, error) {

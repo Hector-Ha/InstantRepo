@@ -81,6 +81,38 @@ func newInstalledRepoTestApp(installedRepos InstalledRepoStore) *AppService {
 	return app
 }
 
+func TestNewAppServiceUsesAppDataDirectoryOverride(t *testing.T) {
+	appDataDir := t.TempDir()
+	t.Setenv("INSTANTREPO_APP_DATA_DIR", appDataDir)
+
+	app := NewAppService()
+	if app.installedRepos == nil {
+		t.Fatalf("installed repo store is nil")
+	}
+	if closer, ok := app.installedRepos.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+
+	if _, err := os.Stat(filepath.Join(appDataDir, "instantrepo.db")); err != nil {
+		t.Fatalf("expected app data override database: %v", err)
+	}
+}
+
+func TestNewAppServiceWithDefaultStoreReturnsAppDataOverrideError(t *testing.T) {
+	t.Setenv("INSTANTREPO_APP_DATA_DIR", "relative-app-data")
+
+	app, err := NewAppServiceWithDefaultStore()
+	if err == nil {
+		t.Fatalf("expected app data override error")
+	}
+	if app != nil {
+		t.Fatalf("expected no app when default store fails")
+	}
+	if !strings.Contains(err.Error(), "app data dir") {
+		t.Fatalf("expected app data error, got %v", err)
+	}
+}
+
 func TestAnalyzePersistsInstalledRepo(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {

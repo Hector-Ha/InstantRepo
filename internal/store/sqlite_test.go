@@ -60,6 +60,27 @@ func TestSQLiteStoreSavesInstalledRepoOnCleanDatabase(t *testing.T) {
 	}
 }
 
+func TestDatabasePathForAppDataDirRejectsRepoRootMarkers(t *testing.T) {
+	for _, marker := range []string{"go.mod", ".git"} {
+		appDataDir := filepath.Join(t.TempDir(), "repo-root")
+		if err := os.MkdirAll(appDataDir, 0o700); err != nil {
+			t.Fatalf("create app data dir: %v", err)
+		}
+		markerPath := filepath.Join(appDataDir, marker)
+		if marker == ".git" {
+			if err := os.Mkdir(markerPath, 0o700); err != nil {
+				t.Fatalf("create .git marker: %v", err)
+			}
+		} else if err := os.WriteFile(markerPath, []byte("module example.com/app\n"), 0o644); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+
+		if _, err := DatabasePathForAppDataDir(appDataDir); err == nil {
+			t.Fatalf("expected %s app data dir to be rejected", marker)
+		}
+	}
+}
+
 func TestSQLiteStoreInitializesFoundationTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "instantrepo.db")
 
