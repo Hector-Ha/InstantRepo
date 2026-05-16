@@ -69,15 +69,18 @@ Parent PRD:
 
 - `#34` Mirror Wails app operations through production-safe CLI.
 
+Completed foundation:
+
+- `#35` Add CLI mirror foundation, JSON contract, and app-data isolation. Closed.
+
 Implementation order:
 
-1. `#35` Add CLI mirror foundation, JSON contract, and app-data isolation.
-2. `#36` Mirror repository analyze, import, preflight, and execute in CLI.
-3. `#37` Mirror Env Draft generate and save flows in CLI.
-4. `#40` Mirror settings and bridge contract metadata in CLI.
-5. `#38` Mirror installed repo history and diagnostics in CLI.
-6. `#39` Mirror Env Vault operations in secret-safe CLI.
-7. `#41` Document CLI mirror and private QA convention.
+1. `#36` Mirror repository analyze, import, preflight, and execute in CLI.
+2. `#37` Mirror Env Draft generate and save flows in CLI.
+3. `#40` Mirror settings and bridge contract metadata in CLI.
+4. `#38` Mirror installed repo history and diagnostics in CLI.
+5. `#39` Mirror Env Vault operations in secret-safe CLI.
+6. `#41` Document CLI mirror and private QA convention.
 
 Do not implement private QA harness code in public issues. Public work must stay production-safe.
 
@@ -137,11 +140,25 @@ Run CLI analyze:
 go run ./cmd/instantrepo -path C:\path\to\repo
 ```
 
+Show CLI contract metadata:
+
+```bash
+go run ./cmd/instantrepo version --json
+```
+
 Run API:
 
 ```bash
 go run ./cmd/instantrepo -serve :8080
 ```
+
+Use isolated app data for CLI or Wails smoke work:
+
+```bash
+go run ./cmd/instantrepo --app-data-dir C:\temp\instantrepo-app-data -path C:\path\to\repo
+```
+
+`INSTANTREPO_APP_DATA_DIR` also isolates app metadata for CLI and Wails launches. Path must be absolute and must not be home, repo root, target repo, or inside target repo.
 
 Build desktop app:
 

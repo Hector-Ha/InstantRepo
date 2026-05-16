@@ -48,15 +48,17 @@ The current roadmap is to mirror Wails app operations through production-safe CL
 
 The CLI mirror track covers:
 
-- stable subcommands with human output by default and `--json` for agents
+- foundation subcommands with human output by default and `--json` for agents
 - structured JSON errors and CLI contract version metadata
-- app-data isolation through an explicit app data directory option
+- app-data isolation through `--app-data-dir` or `INSTANTREPO_APP_DATA_DIR`
 - repository analyze, clone preflight, import, and execute flows
 - Env Draft generate/save flows
 - installed repo history and credential-free diagnostics
 - Env Vault, contribution settings, AI Env Review settings, and bridge contract metadata
 
-See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and child issues [#35](https://github.com/Hector-Ha/InstantRepo/issues/35)-[#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
+Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. The next public slice is [#36](https://github.com/Hector-Ha/InstantRepo/issues/36), which adds production-safe repository analyze/import/preflight/execute subcommands.
+
+See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and remaining child issues [#36](https://github.com/Hector-Ha/InstantRepo/issues/36)-[#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
 
 ## Project Shape
 
@@ -111,6 +113,12 @@ cmd/instantrepo-wails/build/bin/InstantRepo.exe
 
 ## CLI
 
+Show CLI version and contract metadata:
+
+```bash
+go run ./cmd/instantrepo version --json
+```
+
 Analyze repo URL:
 
 ```bash
@@ -134,6 +142,14 @@ Prepare `.env`:
 ```bash
 go run ./cmd/instantrepo -path C:\path\to\repo -step create-env-file -approve
 ```
+
+Use isolated app metadata:
+
+```bash
+go run ./cmd/instantrepo --app-data-dir C:\temp\instantrepo-app-data -path C:\path\to\repo
+```
+
+`INSTANTREPO_APP_DATA_DIR` also works for CLI and Wails launches. The app data path must be absolute and must not point at home, repo root, target repo, or a folder inside the target repo. Bad overrides fail closed instead of silently using normal app metadata.
 
 ## API
 
@@ -216,11 +232,11 @@ Architecture cleanup also landed after #20:
 - [#26 Deepen setup safety scan with ignored generated folders](https://github.com/Hector-Ha/InstantRepo/issues/26)
 - [#27 Deepen Env Draft foundation interfaces](https://github.com/Hector-Ha/InstantRepo/issues/27)
 
-Current ready-for-agent roadmap:
+Current CLI mirror roadmap:
 
 1. [#34 PRD: Mirror Wails app operations through production-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/34)
-2. [#35 CLI foundation, JSON contract, and app-data isolation](https://github.com/Hector-Ha/InstantRepo/issues/35)
-3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36)
+2. [#35 CLI foundation, JSON contract, and app-data isolation](https://github.com/Hector-Ha/InstantRepo/issues/35) is done.
+3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36) is next.
 4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37)
 5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40)
 6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38)
@@ -229,7 +245,7 @@ Current ready-for-agent roadmap:
 
 ## Next Work
 
-- Start #35 CLI mirror foundation.
+- Start #36 repository CLI mirrors.
 - Keep `.qa-local/` private and ignored; do not commit private QA harness files.
 - Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.
