@@ -73,14 +73,14 @@ Completed foundation:
 
 - `#35` Add CLI mirror foundation, JSON contract, and app-data isolation. Closed.
 - `#36` Mirror repository analyze, import, preflight, and execute in CLI. Closed.
+- `#37` Mirror Env Draft generate and save flows in CLI. Closed.
 
 Implementation order:
 
-1. `#37` Mirror Env Draft generate and save flows in CLI.
-2. `#40` Mirror settings and bridge contract metadata in CLI.
-3. `#38` Mirror installed repo history and diagnostics in CLI.
-4. `#39` Mirror Env Vault operations in secret-safe CLI.
-5. `#41` Document CLI mirror and private QA convention.
+1. `#40` Mirror settings and bridge contract metadata in CLI.
+2. `#38` Mirror installed repo history and diagnostics in CLI.
+3. `#39` Mirror Env Vault operations in secret-safe CLI.
+4. `#41` Document CLI mirror and private QA convention.
 
 Do not implement private QA harness code in public issues. Public work must stay production-safe.
 
@@ -156,6 +156,24 @@ Run CLI execute:
 
 ```bash
 go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
+```
+
+Run CLI Env Draft generate:
+
+```bash
+go run ./cmd/instantrepo env draft generate --path C:\path\to\repo --json
+```
+
+Run CLI Env Draft save:
+
+```bash
+go run ./cmd/instantrepo env draft save --path C:\path\to\repo --file C:\path\to\draft.json --json
+```
+
+Run CLI raw env save:
+
+```bash
+go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
 ```
 
 Show CLI contract metadata:

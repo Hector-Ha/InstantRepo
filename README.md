@@ -56,7 +56,7 @@ The CLI mirror track covers:
 - installed repo history and credential-free diagnostics
 - Env Vault, contribution settings, AI Env Review settings, and bridge contract metadata
 
-Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. The next public slice is [#37](https://github.com/Hector-Ha/InstantRepo/issues/37), which adds Env Draft generate/save subcommands.
+Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. Env Draft generate/save mirror work in [#37](https://github.com/Hector-Ha/InstantRepo/issues/37) is done. The next public slice is [#40](https://github.com/Hector-Ha/InstantRepo/issues/40), which adds settings and bridge contract metadata commands.
 
 See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and remaining child issues [#37](https://github.com/Hector-Ha/InstantRepo/issues/37)-[#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
 
@@ -149,7 +149,25 @@ Run one plan step:
 go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
 ```
 
-Prepare `.env`:
+Generate structured Env Draft JSON:
+
+```bash
+go run ./cmd/instantrepo env draft generate --path C:\path\to\repo --json
+```
+
+Save a structured Env Draft from a file:
+
+```bash
+go run ./cmd/instantrepo env draft save --path C:\path\to\repo --file C:\path\to\draft.json --json
+```
+
+Save a raw `.env` for repos with one inferred env target:
+
+```bash
+go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
+```
+
+Legacy prepare `.env`:
 
 ```bash
 go run ./cmd/instantrepo -path C:\path\to\repo -step create-env-file -approve
@@ -256,7 +274,7 @@ Current CLI mirror roadmap:
 1. [#34 PRD: Mirror Wails app operations through production-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/34)
 2. [#35 CLI foundation, JSON contract, and app-data isolation](https://github.com/Hector-Ha/InstantRepo/issues/35) is done.
 3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36) is done.
-4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37)
+4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37) is done.
 5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40)
 6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38)
 7. [#39 Env Vault secret-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/39)
@@ -264,7 +282,7 @@ Current CLI mirror roadmap:
 
 ## Next Work
 
-- Start #37 Env Draft CLI mirrors.
+- Start #40 settings and bridge contract metadata CLI mirrors.
 - Keep `.qa-local/` private and ignored; do not commit private QA harness files.
 - Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.

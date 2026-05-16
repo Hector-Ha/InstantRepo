@@ -22,7 +22,7 @@ func TestVersionCommandJSONReturnsContractMetadata(t *testing.T) {
 		Version: VersionInfo{
 			AppVersion:         "1.2.3",
 			GitCommit:          "abc123",
-			CLIContractVersion: "2026-05-issue-36",
+			CLIContractVersion: "2026-05-issue-37",
 		},
 		NewApp: func(AppConfig) (App, func() error, error) {
 			t.Fatal("version must not create app service")
@@ -44,7 +44,7 @@ func TestVersionCommandJSONReturnsContractMetadata(t *testing.T) {
 	if !payload.OK {
 		t.Fatalf("ok = false")
 	}
-	if payload.Data.CLIContractVersion != "2026-05-issue-36" {
+	if payload.Data.CLIContractVersion != "2026-05-issue-37" {
 		t.Fatalf("data contract = %q", payload.Data.CLIContractVersion)
 	}
 	if payload.Metadata.AppVersion != "1.2.3" || payload.Metadata.GitCommit != "abc123" {
@@ -61,7 +61,7 @@ func TestVersionCommandHumanOutputIsDefault(t *testing.T) {
 		Version: VersionInfo{
 			AppVersion:         "1.2.3",
 			GitCommit:          "abc123",
-			CLIContractVersion: "2026-05-issue-36",
+			CLIContractVersion: "2026-05-issue-37",
 		},
 		NewApp: func(AppConfig) (App, func() error, error) {
 			t.Fatal("version must not create app service")
@@ -73,7 +73,7 @@ func TestVersionCommandHumanOutputIsDefault(t *testing.T) {
 		t.Fatalf("exit code = %d", exitCode)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "InstantRepo 1.2.3") || !strings.Contains(output, "CLI contract 2026-05-issue-36") {
+	if !strings.Contains(output, "InstantRepo 1.2.3") || !strings.Contains(output, "CLI contract 2026-05-issue-37") {
 		t.Fatalf("output = %q", output)
 	}
 	if strings.Contains(output, `"ok"`) {
@@ -267,6 +267,476 @@ func TestRepoAnalyzePathJSONReturnsDomainResponse(t *testing.T) {
 	}
 	if payload.Data.Source.Path != repoPath || payload.Data.Analysis.ProjectName != "demo" {
 		t.Fatalf("data = %+v", payload.Data)
+	}
+}
+
+func TestEnvDraftGenerateJSONReturnsDomainDraft(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		envDraftResp: domain.EnvDraft{
+			RepoPath: repoPath,
+			Targets: []domain.EnvDraftTarget{{
+				RelativePath: ".env",
+				AbsolutePath: filepath.Join(repoPath, ".env"),
+				Values: []domain.EnvDraftValue{{
+					Name:       "JWT_SECRET",
+					Value:      "secret-value",
+					Secret:     true,
+					ValueClass: domain.EnvValueClassGeneratedLocalSecret,
+					Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceGeneratedSecret},
+				}},
+			}},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "generate", "--path", repoPath, "--json"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.generateEnvDraftPath != repoPath {
+		t.Fatalf("generate path = %q", fake.generateEnvDraftPath)
+	}
+	var payload struct {
+		OK   bool            `json:"ok"`
+		Data domain.EnvDraft `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Data.RepoPath != repoPath || len(payload.Data.Targets) != 1 {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.Data.Targets[0].Values[0].Value != "secret-value" {
+		t.Fatalf("draft JSON should preserve generated draft values for save-from-generate")
+	}
+}
+
+func TestEnvDraftGenerateHumanOutputRedactsValues(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		envDraftResp: domain.EnvDraft{
+			RepoPath: repoPath,
+			Targets: []domain.EnvDraftTarget{{
+				RelativePath: "api/.env",
+				AbsolutePath: filepath.Join(repoPath, "api", ".env"),
+				Values: []domain.EnvDraftValue{
+					{
+						Name:       "JWT_SECRET",
+						Value:      "secret-value",
+						Secret:     true,
+						ValueClass: domain.EnvValueClassGeneratedLocalSecret,
+						Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceGeneratedSecret},
+					},
+					{
+						Name:       "STRIPE_SECRET_KEY",
+						Value:      "",
+						Secret:     true,
+						ValueClass: domain.EnvValueClassServiceCredential,
+						Attention:  []string{"Add Stripe key."},
+						Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceCatalog},
+					},
+				},
+			}},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "generate", "--path", repoPath},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Repo: " + repoPath,
+		"Env targets: 1",
+		"api/.env: 2 values",
+		"Service credentials: 1",
+		"Action needed: 1",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q: %s", want, output)
+		}
+	}
+	for _, secret := range []string{"secret-value", "sk-test"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("human output leaked %q: %s", secret, output)
+		}
+	}
+}
+
+func TestEnvDraftSaveFileJSONReturnsExecuteResponse(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	draft := domain.EnvDraft{
+		RepoPath: repoPath,
+		Targets: []domain.EnvDraftTarget{{
+			RelativePath: ".env",
+			AbsolutePath: filepath.Join(repoPath, ".env"),
+			Values: []domain.EnvDraftValue{{
+				Name:       "APP_URL",
+				Value:      "http://localhost:3000",
+				ValueClass: domain.EnvValueClassDevDefault,
+				Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceCatalog},
+			}},
+		}},
+	}
+	draftPath := filepath.Join(t.TempDir(), "draft.json")
+	draftBytes, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	if err := os.WriteFile(draftPath, draftBytes, 0o600); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		saveStructuredResp: domain.ExecuteResponse{
+			Source: domain.RepoSource{Type: "local", Path: repoPath},
+			Result: domain.ExecutionResult{StepID: "create-env-file", Succeeded: true},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "save", "--path", repoPath, "--file", draftPath, "--json"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.saveStructuredPath != repoPath {
+		t.Fatalf("save path = %q", fake.saveStructuredPath)
+	}
+	if len(fake.saveStructuredDraft.Targets) != 1 || fake.saveStructuredDraft.Targets[0].Values[0].Name != "APP_URL" {
+		t.Fatalf("saved draft = %+v", fake.saveStructuredDraft)
+	}
+	var payload struct {
+		OK   bool                   `json:"ok"`
+		Data domain.ExecuteResponse `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Data.Result.StepID != "create-env-file" || !payload.Data.Result.Succeeded {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestEnvDraftSaveStdinJSONReturnsExecuteResponse(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	draft := domain.EnvDraft{
+		RepoPath: repoPath,
+		Targets: []domain.EnvDraftTarget{{
+			RelativePath: ".env",
+			AbsolutePath: filepath.Join(repoPath, ".env"),
+			Values: []domain.EnvDraftValue{{
+				Name:       "APP_URL",
+				Value:      "http://localhost:5173",
+				ValueClass: domain.EnvValueClassDevDefault,
+				Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceCatalog},
+			}},
+		}},
+	}
+	draftBytes, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		saveStructuredResp: domain.ExecuteResponse{
+			Source: domain.RepoSource{Type: "local", Path: repoPath},
+			Result: domain.ExecutionResult{StepID: "create-env-file", Succeeded: true},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "save", "--path", repoPath, "--stdin", "--json"},
+		Stdin:   strings.NewReader(string(draftBytes)),
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.saveStructuredPath != repoPath || fake.saveStructuredDraft.Targets[0].Values[0].Value != "http://localhost:5173" {
+		t.Fatalf("save args = %q %+v", fake.saveStructuredPath, fake.saveStructuredDraft)
+	}
+	var payload struct {
+		OK   bool                   `json:"ok"`
+		Data domain.ExecuteResponse `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || !payload.Data.Result.Succeeded {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestEnvDraftSaveInvalidJSONReturnsStructuredInputError(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	var stderr bytes.Buffer
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "save", "--path", repoPath, "--stdin", "--json"},
+		Stdin:   strings.NewReader(`{"targets":[{"values":[{"value":"secret-value"}]}`),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &stderr,
+		Version: defaultTestVersion(),
+		NewApp: func(AppConfig) (App, func() error, error) {
+			t.Fatal("invalid draft JSON must not create app service")
+			return nil, nil, nil
+		},
+	})
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0")
+	}
+	var payload struct {
+		Error commandError `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stderr: %v\n%s", err, stderr.String())
+	}
+	if payload.Error.Code != "invalid_input" {
+		t.Fatalf("error = %+v", payload.Error)
+	}
+	if strings.Contains(stderr.String(), "secret-value") {
+		t.Fatalf("error leaked raw input: %s", stderr.String())
+	}
+}
+
+func TestEnvDraftSavePolicyFailureReturnsStructuredError(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	draft := domain.EnvDraft{
+		RepoPath: repoPath,
+		Targets: []domain.EnvDraftTarget{{
+			RelativePath: ".env",
+			AbsolutePath: filepath.Join(repoPath, ".env"),
+			Values: []domain.EnvDraftValue{{
+				Name:       "API_SECRET",
+				Value:      "secret-value",
+				Secret:     true,
+				ValueClass: domain.EnvValueClassGeneratedLocalSecret,
+			}},
+		}},
+	}
+	raw, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	var stderr bytes.Buffer
+	fake := &fakeApp{saveStructuredErr: errors.New("save failed; rolled back first target")}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "save", "--path", repoPath, "--stdin", "--json"},
+		Stdin:   strings.NewReader(string(raw)),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &stderr,
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0")
+	}
+	var payload struct {
+		Error commandError `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stderr: %v\n%s", err, stderr.String())
+	}
+	if payload.Error.Code != "env_draft_save_failed" || !strings.Contains(payload.Error.Message, "rolled back") {
+		t.Fatalf("error = %+v", payload.Error)
+	}
+	if strings.Contains(stderr.String(), "secret-value") {
+		t.Fatalf("error leaked draft value: %s", stderr.String())
+	}
+}
+
+func TestEnvDraftGeneratePassesIsolatedAppDataAndCreatesDirectory(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	appDataDir := filepath.Join(t.TempDir(), "app-data")
+	var gotConfig AppConfig
+	fake := &fakeApp{envDraftResp: domain.EnvDraft{RepoPath: repoPath}}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "draft", "generate", "--path", repoPath, "--app-data-dir", appDataDir, "--json"},
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			gotConfig = config
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if gotConfig.AppDataDir != filepath.Clean(appDataDir) {
+		t.Fatalf("app data dir = %q, want %q", gotConfig.AppDataDir, filepath.Clean(appDataDir))
+	}
+	if _, err := os.Stat(appDataDir); err != nil {
+		t.Fatalf("app data dir not created: %v", err)
+	}
+	if fake.generateEnvDraftPath != repoPath {
+		t.Fatalf("generate path = %q", fake.generateEnvDraftPath)
+	}
+}
+
+func TestEnvRawSaveFileJSONReturnsExecuteResponseWithoutEchoingContent(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	inputPath := filepath.Join(t.TempDir(), ".env")
+	rawEnv := "API_SECRET=secret-value\nSTRIPE_SECRET_KEY=sk-test-secret\n"
+	if err := os.WriteFile(inputPath, []byte(rawEnv), 0o600); err != nil {
+		t.Fatalf("write raw env: %v", err)
+	}
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		saveRawResp: domain.ExecuteResponse{
+			Source: domain.RepoSource{Type: "local", Path: repoPath},
+			Result: domain.ExecutionResult{StepID: "save-env-file", Succeeded: true},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "raw", "save", "--path", repoPath, "--file", inputPath, "--json"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.saveRawPath != repoPath || fake.saveRawContent != rawEnv {
+		t.Fatalf("raw save args = %q %q", fake.saveRawPath, fake.saveRawContent)
+	}
+	var payload struct {
+		OK       bool                   `json:"ok"`
+		Data     domain.ExecuteResponse `json:"data"`
+		Metadata VersionInfo            `json:"metadata"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Data.Result.StepID != "save-env-file" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	for _, secret := range []string{"secret-value", "sk-test-secret"} {
+		if strings.Contains(stdout.String(), secret) {
+			t.Fatalf("JSON output leaked %q: %s", secret, stdout.String())
+		}
+	}
+}
+
+func TestEnvRawSaveStdinHumanOutputDoesNotEchoContent(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	rawEnv := "API_SECRET=secret-value\n"
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		saveRawResp: domain.ExecuteResponse{
+			Source: domain.RepoSource{Type: "local", Path: repoPath},
+			Result: domain.ExecutionResult{
+				StepID:    "save-env-file",
+				Succeeded: true,
+				Stdout:    "Saved .env\n",
+			},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "raw", "save", "--path", repoPath, "--stdin"},
+		Stdin:   strings.NewReader(rawEnv),
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.saveRawContent != rawEnv {
+		t.Fatalf("raw content = %q", fake.saveRawContent)
+	}
+	output := stdout.String()
+	for _, want := range []string{"Step: save-env-file", "Status: succeeded", "Saved .env"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "secret-value") {
+		t.Fatalf("human output leaked raw env content: %s", output)
+	}
+}
+
+func TestEnvRawSavePolicyFailureReturnsStructuredError(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	var stderr bytes.Buffer
+	fake := &fakeApp{saveRawErr: errors.New("raw env save supports one env target; use structured env draft for multiple targets")}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "raw", "save", "--path", repoPath, "--stdin", "--json"},
+		Stdin:   strings.NewReader("API_SECRET=secret-value\n"),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &stderr,
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0")
+	}
+	var payload struct {
+		Error commandError `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stderr: %v\n%s", err, stderr.String())
+	}
+	if payload.Error.Code != "env_raw_save_failed" || !strings.Contains(payload.Error.Message, "structured env draft") {
+		t.Fatalf("error = %+v", payload.Error)
+	}
+	if strings.Contains(stderr.String(), "secret-value") {
+		t.Fatalf("error leaked raw env content: %s", stderr.String())
 	}
 }
 
@@ -892,17 +1362,27 @@ func TestAppDataDirRejectsRepoRootWhenLaunchedOutsideSourceTree(t *testing.T) {
 }
 
 type fakeApp struct {
-	analyzeReq        domain.AnalyzeRequest
-	analyzeResp       domain.AnalyzeResponse
-	preflightReq      domain.ClonePreflightRequest
-	preflightResp     domain.ClonePreflightResponse
-	importRepoURL     string
-	importDestination string
-	importResp        domain.AnalyzeResponse
-	importErr         error
-	executeReq        domain.ExecuteRequest
-	executeResp       domain.ExecuteResponse
-	executeErr        error
+	analyzeReq           domain.AnalyzeRequest
+	analyzeResp          domain.AnalyzeResponse
+	preflightReq         domain.ClonePreflightRequest
+	preflightResp        domain.ClonePreflightResponse
+	importRepoURL        string
+	importDestination    string
+	importResp           domain.AnalyzeResponse
+	importErr            error
+	executeReq           domain.ExecuteRequest
+	executeResp          domain.ExecuteResponse
+	executeErr           error
+	generateEnvDraftPath string
+	envDraftResp         domain.EnvDraft
+	saveStructuredPath   string
+	saveStructuredDraft  domain.EnvDraft
+	saveStructuredResp   domain.ExecuteResponse
+	saveStructuredErr    error
+	saveRawPath          string
+	saveRawContent       string
+	saveRawResp          domain.ExecuteResponse
+	saveRawErr           error
 }
 
 func (f *fakeApp) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
@@ -930,6 +1410,29 @@ func (f *fakeApp) Execute(ctx context.Context, req domain.ExecuteRequest) (domai
 		return domain.ExecuteResponse{}, f.executeErr
 	}
 	return f.executeResp, nil
+}
+
+func (f *fakeApp) GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error) {
+	f.generateEnvDraftPath = localPath
+	return f.envDraftResp, nil
+}
+
+func (f *fakeApp) SaveStructuredEnvDraft(ctx context.Context, localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error) {
+	f.saveStructuredPath = localPath
+	f.saveStructuredDraft = draft
+	if f.saveStructuredErr != nil {
+		return domain.ExecuteResponse{}, f.saveStructuredErr
+	}
+	return f.saveStructuredResp, nil
+}
+
+func (f *fakeApp) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
+	f.saveRawPath = localPath
+	f.saveRawContent = content
+	if f.saveRawErr != nil {
+		return domain.ExecuteResponse{}, f.saveRawErr
+	}
+	return f.saveRawResp, nil
 }
 
 func defaultTestVersion() VersionInfo {

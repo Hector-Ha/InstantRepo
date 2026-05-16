@@ -19,7 +19,7 @@ import (
 	"instantrepo/internal/store"
 )
 
-const CLIContractVersion = "2026-05-issue-36"
+const CLIContractVersion = "2026-05-issue-37"
 
 type VersionInfo struct {
 	AppVersion         string `json:"appVersion"`
@@ -30,6 +30,7 @@ type VersionInfo struct {
 type Options struct {
 	Args    []string
 	Environ []string
+	Stdin   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Version VersionInfo
@@ -45,6 +46,9 @@ type App interface {
 	ClonePreflight(ctx context.Context, req domain.ClonePreflightRequest) (domain.ClonePreflightResponse, error)
 	ImportRepository(ctx context.Context, repoURL, destinationRoot string) (domain.AnalyzeResponse, error)
 	Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResponse, error)
+	GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error)
+	SaveStructuredEnvDraft(ctx context.Context, localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error)
+	SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error)
 }
 
 type appWithServer struct {
@@ -67,6 +71,18 @@ func (a appWithServer) ImportRepository(ctx context.Context, repoURL, destinatio
 	return a.app.ImportRepository(ctx, repoURL, destinationRoot)
 }
 
+func (a appWithServer) GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error) {
+	return a.app.GenerateEnvDraft(ctx, localPath)
+}
+
+func (a appWithServer) SaveStructuredEnvDraft(ctx context.Context, localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error) {
+	return a.app.SaveStructuredEnvDraft(ctx, localPath, draft)
+}
+
+func (a appWithServer) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
+	return a.app.SaveRawEnv(ctx, localPath, content)
+}
+
 func Run(ctx context.Context, opts Options) int {
 	opts = withDefaults(opts)
 
@@ -84,6 +100,9 @@ func Run(ctx context.Context, opts Options) int {
 func withDefaults(opts Options) Options {
 	if opts.Stdout == nil {
 		opts.Stdout = os.Stdout
+	}
+	if opts.Stdin == nil {
+		opts.Stdin = os.Stdin
 	}
 	if opts.Stderr == nil {
 		opts.Stderr = os.Stderr
@@ -106,6 +125,8 @@ func withDefaults(opts Options) Options {
 func runSubcommand(ctx context.Context, opts Options, global globalFlags, args []string) int {
 	name := args[0]
 	switch name {
+	case "env":
+		return runEnv(ctx, opts, global, args[1:])
 	case "repo":
 		return runRepo(ctx, opts, global, args[1:])
 	case "version":
@@ -116,6 +137,170 @@ func runSubcommand(ctx context.Context, opts Options, global globalFlags, args [
 			Message: fmt.Sprintf("unknown command %q", name),
 		}, global.JSON || hasJSONFlag(args[1:]))
 	}
+}
+
+func runEnv(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "env command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "draft":
+		return runEnvDraft(ctx, opts, global, args[1:])
+	case "raw":
+		return runEnvRaw(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown env command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runEnvRaw(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "env raw command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "save":
+		return runEnvRawSave(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown env raw command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runEnvDraft(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "env draft command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "generate":
+		return runEnvDraftGenerate(ctx, opts, global, args[1:])
+	case "save":
+		return runEnvDraftSave(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown env draft command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runEnvDraftGenerate(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env draft generate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	localPath := fs.String("path", "", "local repository path")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*localPath) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_path", Message: "local repository path is required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	draft, err := app.GenerateEnvDraft(ctx, *localPath)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_draft_generate_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: draft, Metadata: opts.Version})
+	}
+	return writeEnvDraftSummary(opts.Stdout, draft)
+}
+
+func runEnvDraftSave(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env draft save", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	localPath := fs.String("path", "", "local repository path")
+	inputPath := fs.String("file", "", "draft JSON file")
+	readStdin := fs.Bool("stdin", false, "read draft JSON from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*localPath) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_path", Message: "local repository path is required"}, *jsonOut)
+	}
+	raw, err := readCommandInput(opts, *inputPath, *readStdin, "draft input")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	var draft domain.EnvDraft
+	if err := json.Unmarshal(raw, &draft); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_input", Message: fmt.Sprintf("decode draft JSON: %v", err)}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.SaveStructuredEnvDraft(ctx, *localPath, draft)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_draft_save_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeExecuteSummary(opts.Stdout, resp)
+}
+
+func runEnvRawSave(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env raw save", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	localPath := fs.String("path", "", "local repository path")
+	inputPath := fs.String("file", "", "raw env file")
+	readStdin := fs.Bool("stdin", false, "read raw env content from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*localPath) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_path", Message: "local repository path is required"}, *jsonOut)
+	}
+	raw, err := readCommandInput(opts, *inputPath, *readStdin, "raw env input")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.SaveRawEnv(ctx, *localPath, string(raw))
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_raw_save_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeExecuteSummary(opts.Stdout, resp)
 }
 
 func runRepo(ctx context.Context, opts Options, global globalFlags, args []string) int {
@@ -628,6 +813,28 @@ func writeCommandError(opts Options, err error, jsonOut bool) int {
 	return 1
 }
 
+func readCommandInput(opts Options, inputPath string, readStdin bool, label string) ([]byte, error) {
+	inputPath = strings.TrimSpace(inputPath)
+	if inputPath != "" && readStdin {
+		return nil, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("%s accepts either --file or --stdin, not both", label)}
+	}
+	if inputPath == "" && !readStdin {
+		return nil, commandError{Code: "missing_input", Message: fmt.Sprintf("%s file or --stdin is required", label)}
+	}
+	if readStdin {
+		raw, err := io.ReadAll(opts.Stdin)
+		if err != nil {
+			return nil, commandError{Code: "invalid_input", Message: fmt.Sprintf("read %s from stdin: %v", label, err)}
+		}
+		return raw, nil
+	}
+	raw, err := os.ReadFile(inputPath)
+	if err != nil {
+		return nil, commandError{Code: "invalid_input", Message: fmt.Sprintf("read %s: %v", label, err)}
+	}
+	return raw, nil
+}
+
 func writeJSON(w io.Writer, payload any) int {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -674,6 +881,27 @@ func writeExecuteSummary(w io.Writer, resp domain.ExecuteResponse) int {
 	_, _ = fmt.Fprintf(w, "Exit code: %d\n", resp.Result.ExitCode)
 	writeShortOutput(w, "Stdout", resp.Result.Stdout)
 	writeShortOutput(w, "Stderr", resp.Result.Stderr)
+	return 0
+}
+
+func writeEnvDraftSummary(w io.Writer, draft domain.EnvDraft) int {
+	serviceCredentials := 0
+	actionNeeded := 0
+	_, _ = fmt.Fprintf(w, "Repo: %s\n", draft.RepoPath)
+	_, _ = fmt.Fprintf(w, "Env targets: %d\n", len(draft.Targets))
+	for _, target := range draft.Targets {
+		for _, value := range target.Values {
+			if value.ValueClass == domain.EnvValueClassServiceCredential {
+				serviceCredentials++
+			}
+			if len(value.Attention) > 0 {
+				actionNeeded++
+			}
+		}
+		_, _ = fmt.Fprintf(w, "- %s: %d values\n", target.RelativePath, len(target.Values))
+	}
+	_, _ = fmt.Fprintf(w, "Service credentials: %d\n", serviceCredentials)
+	_, _ = fmt.Fprintf(w, "Action needed: %d\n", actionNeeded)
 	return 0
 }
 
