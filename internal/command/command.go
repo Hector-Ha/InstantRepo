@@ -19,7 +19,7 @@ import (
 	"instantrepo/internal/store"
 )
 
-const CLIContractVersion = "2026-05-issue-35"
+const CLIContractVersion = "2026-05-issue-36"
 
 type VersionInfo struct {
 	AppVersion         string `json:"appVersion"`
@@ -42,6 +42,8 @@ type AppConfig struct {
 
 type App interface {
 	Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error)
+	ClonePreflight(ctx context.Context, req domain.ClonePreflightRequest) (domain.ClonePreflightResponse, error)
+	ImportRepository(ctx context.Context, repoURL, destinationRoot string) (domain.AnalyzeResponse, error)
 	Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResponse, error)
 }
 
@@ -57,15 +59,20 @@ func (a appWithServer) Execute(ctx context.Context, req domain.ExecuteRequest) (
 	return a.app.Execute(ctx, req)
 }
 
+func (a appWithServer) ClonePreflight(ctx context.Context, req domain.ClonePreflightRequest) (domain.ClonePreflightResponse, error) {
+	return a.app.ClonePreflight(ctx, req)
+}
+
+func (a appWithServer) ImportRepository(ctx context.Context, repoURL, destinationRoot string) (domain.AnalyzeResponse, error) {
+	return a.app.ImportRepository(ctx, repoURL, destinationRoot)
+}
+
 func Run(ctx context.Context, opts Options) int {
 	opts = withDefaults(opts)
 
 	global, remaining, err := parseGlobalFlags(opts.Args, opts.Environ)
 	if err != nil {
 		return writeCommandError(opts, err, global.JSON)
-	}
-	if err := validateAppDataDir(global.AppDataDir, global.TargetRepoPath); err != nil {
-		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, global.JSON)
 	}
 
 	if len(remaining) > 0 && !strings.HasPrefix(remaining[0], "-") {
@@ -99,6 +106,8 @@ func withDefaults(opts Options) Options {
 func runSubcommand(ctx context.Context, opts Options, global globalFlags, args []string) int {
 	name := args[0]
 	switch name {
+	case "repo":
+		return runRepo(ctx, opts, global, args[1:])
 	case "version":
 		return runVersion(opts, global, args[1:])
 	default:
@@ -107,6 +116,193 @@ func runSubcommand(ctx context.Context, opts Options, global globalFlags, args [
 			Message: fmt.Sprintf("unknown command %q", name),
 		}, global.JSON || hasJSONFlag(args[1:]))
 	}
+}
+
+func runRepo(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "repo command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "analyze":
+		return runRepoAnalyze(ctx, opts, global, args[1:])
+	case "preflight":
+		return runRepoPreflight(ctx, opts, global, args[1:])
+	case "import", "clone":
+		return runRepoImport(ctx, opts, global, args[1:])
+	case "execute":
+		return runRepoExecute(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown repo command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runRepoAnalyze(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo analyze", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	repoURL := fs.String("repo", "", "repository URL to analyze")
+	localPath := fs.String("path", "", "local repository path to analyze")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*repoURL) == "" && strings.TrimSpace(*localPath) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_target", Message: "repo URL or local path is required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.Analyze(ctx, domain.AnalyzeRequest{
+		RepoURL:   *repoURL,
+		LocalPath: *localPath,
+	})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "analyze_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeAnalyzeSummary(opts.Stdout, resp)
+}
+
+func runRepoPreflight(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo preflight", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	repoURL := fs.String("repo", "", "repository URL to check")
+	destination := fs.String("destination", "", "destination folder")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if strings.TrimSpace(*repoURL) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_repo", Message: "repo URL is required"}, *jsonOut)
+	}
+	if strings.TrimSpace(*destination) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_destination", Message: "destination folder is required"}, *jsonOut)
+	}
+	targetPath, err := service.CloneTargetPath(*repoURL, *destination)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("resolve clone target: %v", err)}, *jsonOut)
+	}
+	if err := validateAppDataDir(global.AppDataDir, targetPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ClonePreflight(ctx, domain.ClonePreflightRequest{
+		RepoURL:         *repoURL,
+		DestinationRoot: *destination,
+	})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "preflight_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writePreflightSummary(opts.Stdout, resp)
+}
+
+func runRepoImport(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo import", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	repoURL := fs.String("repo", "", "repository URL to import")
+	destination := fs.String("destination", "", "destination folder")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if strings.TrimSpace(*repoURL) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_repo", Message: "repo URL is required"}, *jsonOut)
+	}
+	if strings.TrimSpace(*destination) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_destination", Message: "destination folder is required"}, *jsonOut)
+	}
+	targetPath, err := service.CloneTargetPath(*repoURL, *destination)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("resolve clone target: %v", err)}, *jsonOut)
+	}
+	if err := validateAppDataDir(global.AppDataDir, targetPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ImportRepository(ctx, *repoURL, *destination)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "import_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeImportSummary(opts.Stdout, resp)
+}
+
+func runRepoExecute(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo execute", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	repoURL := fs.String("repo", "", "repository URL")
+	localPath := fs.String("path", "", "local repository path")
+	stepID := fs.String("step", "", "setup step ID")
+	approve := fs.Bool("approve", false, "approve risky setup step")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*stepID) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_step", Message: "step ID is required"}, *jsonOut)
+	}
+	if strings.TrimSpace(*repoURL) == "" && strings.TrimSpace(*localPath) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_target", Message: "repo URL or local path is required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.Execute(ctx, domain.ExecuteRequest{
+		RepoURL:      *repoURL,
+		LocalPath:    *localPath,
+		StepID:       *stepID,
+		ApproveRisky: *approve,
+	})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "execute_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeExecuteSummary(opts.Stdout, resp)
 }
 
 func runVersion(opts Options, global globalFlags, args []string) int {
@@ -439,4 +635,65 @@ func writeJSON(w io.Writer, payload any) int {
 		return 1
 	}
 	return 0
+}
+
+func writeAnalyzeSummary(w io.Writer, resp domain.AnalyzeResponse) int {
+	source := resp.Source.Path
+	if source == "" {
+		source = resp.Source.RepoURL
+	}
+	_, _ = fmt.Fprintf(w, "Repo: %s\n", source)
+	_, _ = fmt.Fprintf(w, "Project: %s (%s)\n", fallbackText(resp.Plan.ProjectName, resp.Analysis.ProjectName, "unknown"), fallbackText(resp.Plan.ProjectType, resp.Analysis.ProjectType, "unknown"))
+	_, _ = fmt.Fprintf(w, "Setup steps: %d\n", len(resp.Plan.Steps))
+	_, _ = fmt.Fprintf(w, "Attention: %d\n", len(resp.Plan.Gaps)+len(resp.Plan.Safety.Findings))
+	return 0
+}
+
+func writePreflightSummary(w io.Writer, resp domain.ClonePreflightResponse) int {
+	_, _ = fmt.Fprintf(w, "Action: %s\n", fallbackText(resp.RecommendedAction, "unknown"))
+	_, _ = fmt.Fprintf(w, "Target: %s\n", resp.TargetPath)
+	for _, message := range resp.Messages {
+		_, _ = fmt.Fprintf(w, "%s: %s\n", fallbackText(message.Severity, "info"), message.Text)
+	}
+	return 0
+}
+
+func writeImportSummary(w io.Writer, resp domain.AnalyzeResponse) int {
+	_, _ = fmt.Fprintf(w, "Imported: %s\n", resp.Source.Path)
+	_, _ = fmt.Fprintf(w, "Setup steps: %d\n", len(resp.Plan.Steps))
+	return 0
+}
+
+func writeExecuteSummary(w io.Writer, resp domain.ExecuteResponse) int {
+	status := "failed"
+	if resp.Result.Succeeded {
+		status = "succeeded"
+	}
+	_, _ = fmt.Fprintf(w, "Step: %s\n", resp.Result.StepID)
+	_, _ = fmt.Fprintf(w, "Status: %s\n", status)
+	_, _ = fmt.Fprintf(w, "Exit code: %d\n", resp.Result.ExitCode)
+	writeShortOutput(w, "Stdout", resp.Result.Stdout)
+	writeShortOutput(w, "Stderr", resp.Result.Stderr)
+	return 0
+}
+
+func writeShortOutput(w io.Writer, label, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) > 3 {
+		lines = append(lines[:3], "...")
+	}
+	_, _ = fmt.Fprintf(w, "%s:\n%s\n", label, strings.Join(lines, "\n"))
+}
+
+func fallbackText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

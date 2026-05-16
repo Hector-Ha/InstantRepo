@@ -72,15 +72,15 @@ Parent PRD:
 Completed foundation:
 
 - `#35` Add CLI mirror foundation, JSON contract, and app-data isolation. Closed.
+- `#36` Mirror repository analyze, import, preflight, and execute in CLI. Closed.
 
 Implementation order:
 
-1. `#36` Mirror repository analyze, import, preflight, and execute in CLI.
-2. `#37` Mirror Env Draft generate and save flows in CLI.
-3. `#40` Mirror settings and bridge contract metadata in CLI.
-4. `#38` Mirror installed repo history and diagnostics in CLI.
-5. `#39` Mirror Env Vault operations in secret-safe CLI.
-6. `#41` Document CLI mirror and private QA convention.
+1. `#37` Mirror Env Draft generate and save flows in CLI.
+2. `#40` Mirror settings and bridge contract metadata in CLI.
+3. `#38` Mirror installed repo history and diagnostics in CLI.
+4. `#39` Mirror Env Vault operations in secret-safe CLI.
+5. `#41` Document CLI mirror and private QA convention.
 
 Do not implement private QA harness code in public issues. Public work must stay production-safe.
 
@@ -137,7 +137,25 @@ wails dev
 Run CLI analyze:
 
 ```bash
-go run ./cmd/instantrepo -path C:\path\to\repo
+go run ./cmd/instantrepo repo analyze --path C:\path\to\repo
+```
+
+Run CLI clone preflight:
+
+```bash
+go run ./cmd/instantrepo repo preflight --repo https://github.com/user/repo --destination C:\work
+```
+
+Run CLI import:
+
+```bash
+go run ./cmd/instantrepo repo import --repo https://github.com/user/repo --destination C:\work
+```
+
+Run CLI execute:
+
+```bash
+go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
 ```
 
 Show CLI contract metadata:

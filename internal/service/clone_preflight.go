@@ -34,12 +34,12 @@ func (s *AppService) ClonePreflight(ctx context.Context, req domain.ClonePreflig
 		return domain.ClonePreflightResponse{}, fmt.Errorf("destination folder is required")
 	}
 
-	absDestination, err := filepath.Abs(destinationRoot)
+	targetPath, err := CloneTargetPath(repoURL, destinationRoot)
 	if err != nil {
 		return domain.ClonePreflightResponse{}, fmt.Errorf("resolve destination: %w", err)
 	}
+	absDestination := filepath.Dir(targetPath)
 
-	targetPath := filepath.Join(absDestination, repoDirName(repoURL))
 	targetExists, targetEmpty := inspectTarget(targetPath)
 	destinationWritable := canWriteDirectory(absDestination)
 	disk := s.cloneDiskStatus(diskCheckPath(absDestination))
@@ -119,6 +119,14 @@ func (s *AppService) ClonePreflight(ctx context.Context, req domain.ClonePreflig
 	}
 
 	return resp, nil
+}
+
+func CloneTargetPath(repoURL, destinationRoot string) (string, error) {
+	absDestination, err := filepath.Abs(strings.TrimSpace(destinationRoot))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(absDestination, repoDirName(repoURL)), nil
 }
 
 func (s *AppService) clonePreflightPathConflictRepos(ctx context.Context, targetPath string) ([]domain.InstalledRepo, error) {
