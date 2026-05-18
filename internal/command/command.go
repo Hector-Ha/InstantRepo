@@ -55,6 +55,18 @@ type App interface {
 	GenerateEnvDraft(ctx context.Context, localPath string) (domain.EnvDraft, error)
 	SaveStructuredEnvDraft(ctx context.Context, localPath string, draft domain.EnvDraft) (domain.ExecuteResponse, error)
 	SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error)
+	ListInstalledRepos(ctx context.Context) (domain.InstalledRepoManagerResponse, error)
+	InstalledRepoDetails(ctx context.Context, installedRepoID int64) (domain.InstalledRepoDetailsResponse, error)
+	ExportRepoDiagnostics(ctx context.Context, req domain.RepoDiagnosticExportRequest) (domain.RepoDiagnosticExport, error)
+	SaveEnvVaultCredential(ctx context.Context, req domain.EnvVaultSaveRequest) (domain.EnvVaultSaveResponse, error)
+	ListEnvVaultEntries(ctx context.Context) (domain.EnvVaultManagerResponse, error)
+	RevealEnvVaultEntry(ctx context.Context, req domain.EnvVaultRevealRequest) (domain.EnvVaultRevealResponse, error)
+	UpdateEnvVaultEntry(ctx context.Context, req domain.EnvVaultUpdateRequest) (domain.EnvVaultSaveResponse, error)
+	RemoveEnvVaultEntry(ctx context.Context, entryID int64) error
+	ApproveEnvVaultEntry(ctx context.Context, approval domain.EnvVaultApproval) error
+	MarkEnvVaultEntryStatus(ctx context.Context, entryID int64, status string) error
+	RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error
+	SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error
 	EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettingsResponse, error)
 	SaveEnvContributionSettings(ctx context.Context, settings domain.EnvContributionSettings) (domain.EnvContributionSettingsResponse, error)
 	RecordEnvContributionConsent(ctx context.Context, publicEnabled bool) (domain.EnvContributionSettingsResponse, error)
@@ -93,6 +105,54 @@ func (a appWithServer) SaveStructuredEnvDraft(ctx context.Context, localPath str
 
 func (a appWithServer) SaveRawEnv(ctx context.Context, localPath, content string) (domain.ExecuteResponse, error) {
 	return a.app.SaveRawEnv(ctx, localPath, content)
+}
+
+func (a appWithServer) ListInstalledRepos(ctx context.Context) (domain.InstalledRepoManagerResponse, error) {
+	return a.app.ListInstalledRepos(ctx)
+}
+
+func (a appWithServer) InstalledRepoDetails(ctx context.Context, installedRepoID int64) (domain.InstalledRepoDetailsResponse, error) {
+	return a.app.InstalledRepoDetails(ctx, installedRepoID)
+}
+
+func (a appWithServer) ExportRepoDiagnostics(ctx context.Context, req domain.RepoDiagnosticExportRequest) (domain.RepoDiagnosticExport, error) {
+	return a.app.ExportRepoDiagnostics(ctx, req)
+}
+
+func (a appWithServer) SaveEnvVaultCredential(ctx context.Context, req domain.EnvVaultSaveRequest) (domain.EnvVaultSaveResponse, error) {
+	return a.app.SaveEnvVaultCredential(ctx, req)
+}
+
+func (a appWithServer) ListEnvVaultEntries(ctx context.Context) (domain.EnvVaultManagerResponse, error) {
+	return a.app.ListEnvVaultEntries(ctx)
+}
+
+func (a appWithServer) RevealEnvVaultEntry(ctx context.Context, req domain.EnvVaultRevealRequest) (domain.EnvVaultRevealResponse, error) {
+	return a.app.RevealEnvVaultEntry(ctx, req)
+}
+
+func (a appWithServer) UpdateEnvVaultEntry(ctx context.Context, req domain.EnvVaultUpdateRequest) (domain.EnvVaultSaveResponse, error) {
+	return a.app.UpdateEnvVaultEntry(ctx, req)
+}
+
+func (a appWithServer) RemoveEnvVaultEntry(ctx context.Context, entryID int64) error {
+	return a.app.RemoveEnvVaultEntry(ctx, entryID)
+}
+
+func (a appWithServer) ApproveEnvVaultEntry(ctx context.Context, approval domain.EnvVaultApproval) error {
+	return a.app.ApproveEnvVaultEntry(ctx, approval)
+}
+
+func (a appWithServer) MarkEnvVaultEntryStatus(ctx context.Context, entryID int64, status string) error {
+	return a.app.MarkEnvVaultEntryStatus(ctx, entryID, status)
+}
+
+func (a appWithServer) RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error {
+	return a.app.RevokeEnvVaultApproval(ctx, approvalID)
+}
+
+func (a appWithServer) SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
+	return a.app.SuppressEnvVaultPrompt(ctx, suppression)
 }
 
 func (a appWithServer) EnvContributionSettings(ctx context.Context) (domain.EnvContributionSettingsResponse, error) {
@@ -482,6 +542,8 @@ func runEnv(ctx context.Context, opts Options, global globalFlags, args []string
 		return runEnvDraft(ctx, opts, global, args[1:])
 	case "raw":
 		return runEnvRaw(ctx, opts, global, args[1:])
+	case "vault":
+		return runEnvVault(ctx, opts, global, args[1:])
 	default:
 		return writeCommandError(opts, commandError{
 			Code:    "unknown_command",
@@ -637,6 +699,395 @@ func runEnvRawSave(ctx context.Context, opts Options, global globalFlags, args [
 	return writeExecuteSummary(opts.Stdout, resp)
 }
 
+func runEnvVault(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	if len(args) == 0 {
+		return writeCommandError(opts, commandError{Code: "missing_command", Message: "env vault command is required"}, global.JSON)
+	}
+	switch args[0] {
+	case "list":
+		return runEnvVaultList(ctx, opts, global, args[1:])
+	case "save":
+		return runEnvVaultSave(ctx, opts, global, args[1:])
+	case "update":
+		return runEnvVaultUpdate(ctx, opts, global, args[1:])
+	case "remove":
+		return runEnvVaultRemove(ctx, opts, global, args[1:])
+	case "approve":
+		return runEnvVaultApprove(ctx, opts, global, args[1:])
+	case "revoke":
+		return runEnvVaultRevoke(ctx, opts, global, args[1:])
+	case "status":
+		return runEnvVaultStatus(ctx, opts, global, args[1:])
+	case "suppress":
+		return runEnvVaultSuppress(ctx, opts, global, args[1:])
+	case "reveal":
+		return runEnvVaultReveal(ctx, opts, global, args[1:])
+	default:
+		return writeCommandError(opts, commandError{
+			Code:    "unknown_command",
+			Message: fmt.Sprintf("unknown env vault command %q", args[0]),
+		}, global.JSON || hasJSONFlag(args[1:]))
+	}
+}
+
+func runEnvVaultList(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault list", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ListEnvVaultEntries(ctx)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_list_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultListSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultSave(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault save", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	provider := fs.String("provider", "", "credential provider")
+	variableName := fs.String("variable", "", "env variable name")
+	displayName := fs.String("display-name", "", "credential display name")
+	inputPath := fs.String("file", "", "credential value file")
+	readStdin := fs.Bool("stdin", false, "read credential value from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*variableName) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_variable", Message: "--variable is required"}, *jsonOut)
+	}
+	raw, err := readCommandInput(opts, *inputPath, *readStdin, "credential value input")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.SaveEnvVaultCredential(ctx, domain.EnvVaultSaveRequest{
+		Provider:     *provider,
+		VariableName: *variableName,
+		DisplayName:  *displayName,
+		Value:        string(raw),
+	})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_save_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultSaveSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultUpdate(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault update", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "vault entry ID")
+	displayName := fs.String("display-name", "", "credential display name")
+	inputPath := fs.String("file", "", "credential value file")
+	readStdin := fs.Bool("stdin", false, "read credential value from stdin")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	updateValue := strings.TrimSpace(*inputPath) != "" || *readStdin
+	if strings.TrimSpace(*displayName) == "" && !updateValue {
+		return writeCommandError(opts, commandError{Code: "missing_update", Message: "--display-name, --file, or --stdin is required"}, *jsonOut)
+	}
+	req := domain.EnvVaultUpdateRequest{
+		EntryID:     entryID,
+		DisplayName: *displayName,
+		UpdateValue: updateValue,
+	}
+	if updateValue {
+		raw, err := readCommandInput(opts, *inputPath, *readStdin, "credential value input")
+		if err != nil {
+			return writeCommandError(opts, err, *jsonOut)
+		}
+		req.Value = string(raw)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.UpdateEnvVaultEntry(ctx, req)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_update_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultSaveSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultRemove(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault remove", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "vault entry ID")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	if err := app.RemoveEnvVaultEntry(ctx, entryID); err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_remove_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp := envVaultActionResponse{Action: "remove", EntryID: entryID}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultActionSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultApprove(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault approve", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "vault entry ID")
+	repoPath := fs.String("repo-path", "", "local repository path")
+	target := fs.String("target", "", "target env file relative path")
+	variableName := fs.String("variable", "", "env variable name")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *repoPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	if strings.TrimSpace(*repoPath) == "" || strings.TrimSpace(*target) == "" || strings.TrimSpace(*variableName) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_approval_target", Message: "--repo-path, --target, and --variable are required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	approval := domain.EnvVaultApproval{
+		EntryID:            entryID,
+		RepoPath:           *repoPath,
+		TargetRelativePath: *target,
+		VariableName:       *variableName,
+	}
+	if err := app.ApproveEnvVaultEntry(ctx, approval); err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_approve_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp := envVaultActionResponse{Action: "approve", EntryID: entryID, RepoPath: *repoPath, TargetRelativePath: *target, VariableName: *variableName}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultActionSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultRevoke(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault revoke", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("approval-id", "", "vault approval ID")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	approvalID, err := requiredPositiveInt64(*idRaw, "--approval-id", "missing_approval_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	if err := app.RevokeEnvVaultApproval(ctx, approvalID); err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_revoke_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp := envVaultActionResponse{Action: "revoke", ApprovalID: approvalID}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultActionSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultStatus(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "vault entry ID")
+	status := fs.String("status", "", "vault entry status")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	if strings.TrimSpace(*status) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_status", Message: "--status is required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	if err := app.MarkEnvVaultEntryStatus(ctx, entryID, *status); err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_status_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp := envVaultActionResponse{Action: "status", EntryID: entryID, Status: *status}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultActionSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultSuppress(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault suppress", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	repoPath := fs.String("repo-path", "", "local repository path")
+	target := fs.String("target", "", "target env file relative path")
+	variableName := fs.String("variable", "", "env variable name")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, *repoPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	if strings.TrimSpace(*repoPath) == "" || strings.TrimSpace(*target) == "" || strings.TrimSpace(*variableName) == "" {
+		return writeCommandError(opts, commandError{Code: "missing_suppression_target", Message: "--repo-path, --target, and --variable are required"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	suppression := domain.EnvVaultPromptSuppression{
+		RepoPath:           *repoPath,
+		TargetRelativePath: *target,
+		VariableName:       *variableName,
+	}
+	if err := app.SuppressEnvVaultPrompt(ctx, suppression); err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_suppress_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp := envVaultActionResponse{Action: "suppress", RepoPath: *repoPath, TargetRelativePath: *target, VariableName: *variableName}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultActionSummary(opts.Stdout, resp)
+}
+
+func runEnvVaultReveal(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("env vault reveal", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "vault entry ID")
+	confirmReveal := fs.Bool("confirm-reveal", false, "confirm raw credential reveal")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	if !*confirmReveal {
+		return writeCommandError(opts, commandError{Code: "reveal_not_confirmed", Message: "env vault reveal requires --confirm-reveal"}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{EntryID: entryID, Confirmed: true})
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "env_vault_reveal_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeEnvVaultRevealSummary(opts.Stdout, resp)
+}
+
 func runRepo(ctx context.Context, opts Options, global globalFlags, args []string) int {
 	if len(args) == 0 {
 		return writeCommandError(opts, commandError{Code: "missing_command", Message: "repo command is required"}, global.JSON)
@@ -650,6 +1101,12 @@ func runRepo(ctx context.Context, opts Options, global globalFlags, args []strin
 		return runRepoImport(ctx, opts, global, args[1:])
 	case "execute":
 		return runRepoExecute(ctx, opts, global, args[1:])
+	case "list":
+		return runRepoList(ctx, opts, global, args[1:])
+	case "details":
+		return runRepoDetails(ctx, opts, global, args[1:])
+	case "diagnostics":
+		return runRepoDiagnostics(ctx, opts, global, args[1:])
 	default:
 		return writeCommandError(opts, commandError{
 			Code:    "unknown_command",
@@ -822,6 +1279,116 @@ func runRepoExecute(ctx context.Context, opts Options, global globalFlags, args 
 		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
 	}
 	return writeExecuteSummary(opts.Stdout, resp)
+}
+
+func runRepoList(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo list", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ListInstalledRepos(ctx)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "repo_list_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeInstalledReposSummary(opts.Stdout, resp)
+}
+
+func runRepoDetails(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo details", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "installed repo ID")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	installedRepoID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+	if err != nil {
+		return writeCommandError(opts, err, *jsonOut)
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.InstalledRepoDetails(ctx, installedRepoID)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "repo_details_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeInstalledRepoDetailsSummary(opts.Stdout, resp)
+}
+
+func runRepoDiagnostics(ctx context.Context, opts Options, global globalFlags, args []string) int {
+	fs := flag.NewFlagSet("repo diagnostics", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", global.JSON, "write JSON output")
+	idRaw := fs.String("id", "", "installed repo ID")
+	localPath := fs.String("path", "", "local repository path")
+	appDataDir := fs.String("app-data-dir", global.AppDataDir, "app data directory")
+	if err := fs.Parse(args); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
+	}
+	global.AppDataDir = strings.TrimSpace(*appDataDir)
+	idSet := strings.TrimSpace(*idRaw) != ""
+	pathSet := strings.TrimSpace(*localPath) != ""
+	if !idSet && !pathSet {
+		return writeCommandError(opts, commandError{Code: "missing_target", Message: "--id or --path is required"}, *jsonOut)
+	}
+	if idSet && pathSet {
+		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: "use either --id or --path, not both"}, *jsonOut)
+	}
+	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
+	}
+	req := domain.RepoDiagnosticExportRequest{LocalPath: *localPath}
+	if idSet {
+		installedRepoID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
+		if err != nil {
+			return writeCommandError(opts, err, *jsonOut)
+		}
+		req = domain.RepoDiagnosticExportRequest{InstalledRepoID: installedRepoID}
+	}
+	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "app_init_failed", Message: err.Error()}, *jsonOut)
+	}
+	resp, err := app.ExportRepoDiagnostics(ctx, req)
+	if err != nil {
+		return writeCommandError(opts, commandError{Code: "diagnostics_failed", Message: err.Error()}, *jsonOut)
+	}
+	if *jsonOut {
+		return writeJSON(opts.Stdout, successEnvelope{OK: true, Data: resp, Metadata: opts.Version})
+	}
+	return writeRepoDiagnosticsSummary(opts.Stdout, resp)
 }
 
 func runVersion(opts Options, global globalFlags, args []string) int {
@@ -1016,6 +1583,18 @@ func hasJSONFlag(args []string) bool {
 	return false
 }
 
+func requiredPositiveInt64(raw, flagName, missingCode string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, commandError{Code: missingCode, Message: fmt.Sprintf("%s is required", flagName)}
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("%s must be a positive integer", flagName)}
+	}
+	return value, nil
+}
+
 func validateAppDataDir(appDataDir, targetRepoPath string) error {
 	appDataDir = strings.TrimSpace(appDataDir)
 	if appDataDir == "" {
@@ -1125,6 +1704,16 @@ type successEnvelope struct {
 	OK       bool        `json:"ok"`
 	Data     any         `json:"data"`
 	Metadata VersionInfo `json:"metadata"`
+}
+
+type envVaultActionResponse struct {
+	Action             string `json:"action"`
+	EntryID            int64  `json:"entryId,omitempty"`
+	ApprovalID         int64  `json:"approvalId,omitempty"`
+	Status             string `json:"status,omitempty"`
+	RepoPath           string `json:"repoPath,omitempty"`
+	TargetRelativePath string `json:"targetRelativePath,omitempty"`
+	VariableName       string `json:"variableName,omitempty"`
 }
 
 type errorEnvelope struct {
@@ -1240,6 +1829,105 @@ func writeEnvDraftSummary(w io.Writer, draft domain.EnvDraft) int {
 	return 0
 }
 
+func writeInstalledReposSummary(w io.Writer, resp domain.InstalledRepoManagerResponse) int {
+	_, _ = fmt.Fprintf(w, "Installed repos: %d\n", len(resp.Repos))
+	for _, repo := range resp.Repos {
+		_, _ = fmt.Fprintf(w, "- #%d %s [%s]\n", repo.ID, fallbackText(repo.ProjectName, "Installed Repo"), fallbackText(repo.Status, "unknown"))
+		_, _ = fmt.Fprintf(w, "  Path: %s\n", repo.LocalPath)
+		_, _ = fmt.Fprintf(w, "  Last activity: %s\n", formatSummaryTime(repo.LastActivityAt))
+	}
+	return 0
+}
+
+func writeInstalledRepoDetailsSummary(w io.Writer, resp domain.InstalledRepoDetailsResponse) int {
+	repo := resp.Repo
+	_, _ = fmt.Fprintf(w, "Repo #%d: %s\n", repo.ID, fallbackText(repo.ProjectName, "Installed Repo"))
+	_, _ = fmt.Fprintf(w, "Path: %s\n", repo.LocalPath)
+	_, _ = fmt.Fprintf(w, "Status: %s\n", fallbackText(repo.Status, "unknown"))
+	_, _ = fmt.Fprintf(w, "Last analyzed: %s\n", formatSummaryTime(repo.LastAnalyzedAt))
+	_, _ = fmt.Fprintf(w, "Last setup: %s\n", formatSummaryTime(repo.LastSetupAt))
+	_, _ = fmt.Fprintf(w, "Setup sessions: %d\n", len(resp.SetupSessions))
+	for _, session := range resp.SetupSessions {
+		_, _ = fmt.Fprintf(w, "- #%d %s updated %s\n", session.ID, fallbackText(session.Status, "unknown"), formatSummaryTime(session.UpdatedAt))
+	}
+	return 0
+}
+
+func writeRepoDiagnosticsSummary(w io.Writer, export domain.RepoDiagnosticExport) int {
+	_, _ = fmt.Fprintf(w, "Repo diagnostics: #%d %s\n", export.Repo.ID, export.Repo.LocalPath)
+	_, _ = fmt.Fprintf(w, "Schema: %s\n", export.SchemaVersion)
+	_, _ = fmt.Fprintf(w, "Project: %s (%s)\n", fallbackText(export.SetupPlan.ProjectName, export.Analysis.ProjectName, "unknown"), fallbackText(export.SetupPlan.ProjectType, export.Analysis.ProjectType, "unknown"))
+	_, _ = fmt.Fprintf(w, "Plan steps: %d\n", len(export.SetupPlan.Steps))
+	_, _ = fmt.Fprintf(w, "Setup sessions: %d\n", len(export.SetupSessions))
+	_, _ = fmt.Fprintln(w, "Logs: redacted and truncated")
+	return 0
+}
+
+func writeEnvVaultListSummary(w io.Writer, resp domain.EnvVaultManagerResponse) int {
+	_, _ = fmt.Fprintf(w, "Vault entries: %d\n", len(resp.Entries))
+	for _, entry := range resp.Entries {
+		_, _ = fmt.Fprintf(w, "- #%d %s [%s]\n", entry.ID, fallbackText(entry.DisplayName, entry.VariableName, "credential"), fallbackText(entry.Status, "unknown"))
+		_, _ = fmt.Fprintf(w, "  Provider: %s\n", entry.Provider)
+		_, _ = fmt.Fprintf(w, "  Variable: %s\n", entry.VariableName)
+		_, _ = fmt.Fprintf(w, "  Fingerprint: %s\n", entry.FingerprintFragment)
+		_, _ = fmt.Fprintf(w, "  Uses: %d\n", entry.Usage.TotalUseCount)
+		_, _ = fmt.Fprintf(w, "  Approvals: %d\n", len(entry.Approvals))
+	}
+	return 0
+}
+
+func writeEnvVaultSaveSummary(w io.Writer, resp domain.EnvVaultSaveResponse) int {
+	entry := resp.Entry
+	if resp.NeedsReview {
+		_, _ = fmt.Fprintln(w, "Vault entry needs review")
+		if resp.ReviewMessage != "" {
+			_, _ = fmt.Fprintf(w, "Review: %s\n", resp.ReviewMessage)
+		}
+	} else {
+		_, _ = fmt.Fprintln(w, "Vault entry saved")
+	}
+	if entry.ID != 0 {
+		_, _ = fmt.Fprintf(w, "Entry ID: %d\n", entry.ID)
+		_, _ = fmt.Fprintf(w, "Display name: %s\n", entry.DisplayName)
+		_, _ = fmt.Fprintf(w, "Provider: %s\n", entry.Provider)
+		_, _ = fmt.Fprintf(w, "Variable: %s\n", entry.VariableName)
+		_, _ = fmt.Fprintf(w, "Status: %s\n", entry.Status)
+		_, _ = fmt.Fprintf(w, "Fingerprint: %s\n", entry.FingerprintFragment)
+	}
+	return 0
+}
+
+func writeEnvVaultActionSummary(w io.Writer, resp envVaultActionResponse) int {
+	_, _ = fmt.Fprintf(w, "Vault action: %s\n", resp.Action)
+	if resp.EntryID != 0 {
+		_, _ = fmt.Fprintf(w, "Entry ID: %d\n", resp.EntryID)
+	}
+	if resp.ApprovalID != 0 {
+		_, _ = fmt.Fprintf(w, "Approval ID: %d\n", resp.ApprovalID)
+	}
+	if resp.Status != "" {
+		_, _ = fmt.Fprintf(w, "Status: %s\n", resp.Status)
+	}
+	if resp.RepoPath != "" {
+		_, _ = fmt.Fprintf(w, "Repo: %s\n", resp.RepoPath)
+	}
+	if resp.TargetRelativePath != "" {
+		_, _ = fmt.Fprintf(w, "Target: %s\n", resp.TargetRelativePath)
+	}
+	if resp.VariableName != "" {
+		_, _ = fmt.Fprintf(w, "Variable: %s\n", resp.VariableName)
+	}
+	return 0
+}
+
+func writeEnvVaultRevealSummary(w io.Writer, resp domain.EnvVaultRevealResponse) int {
+	_, _ = fmt.Fprintln(w, "Credential reveal confirmed")
+	_, _ = fmt.Fprintf(w, "Entry ID: %d\n", resp.EntryID)
+	_, _ = fmt.Fprintf(w, "Reveal until: %s\n", formatSummaryTime(resp.RevealUntil))
+	_, _ = fmt.Fprintf(w, "Value: %s\n", resp.Value)
+	return 0
+}
+
 func writeContributionSettingsSummary(w io.Writer, resp domain.EnvContributionSettingsResponse) int {
 	_, _ = fmt.Fprintf(w, "Public env patterns: %t\n", resp.Settings.PublicEnvPatternsEnabled)
 	_, _ = fmt.Fprintf(w, "Private/local env patterns: %t\n", resp.Settings.PrivateLocalEnvPatternsEnabled)
@@ -1296,4 +1984,11 @@ func fallbackText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func formatSummaryTime(value time.Time) string {
+	if value.IsZero() {
+		return "never"
+	}
+	return value.UTC().Format(time.RFC3339)
 }

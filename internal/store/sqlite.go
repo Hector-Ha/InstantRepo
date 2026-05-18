@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -26,6 +27,7 @@ const setupLogRetention = 7 * 24 * time.Hour
 const envContributionQueueRetention = 30 * 24 * time.Hour
 const envContributionSettingsKey = "env_pattern_contribution_settings"
 const aiEnvReviewSettingsKey = "ai_env_review_settings"
+const envVaultCredentialNamespaceKey = "env_vault_credential_namespace"
 const envPortAssignmentKeyPrefix = "env_port_assignment:"
 
 type SQLiteStore struct {
@@ -577,6 +579,44 @@ WHERE key = ?;
 		return domain.AIEnvReviewSettings{}, fmt.Errorf("parse ai env review settings: %w", err)
 	}
 	return settings, nil
+}
+
+func (s *SQLiteStore) EnvVaultCredentialNamespace(ctx context.Context) (string, error) {
+	var namespace string
+	err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM app_settings
+WHERE key = ?;
+`, envVaultCredentialNamespaceKey).Scan(&namespace)
+	if err == nil && strings.TrimSpace(namespace) != "" {
+		return namespace, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("query env vault credential namespace: %w", err)
+	}
+
+	generated, err := newEnvVaultCredentialNamespace()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO app_settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO NOTHING;
+`, envVaultCredentialNamespaceKey, generated, formatTime(time.Now().UTC())); err != nil {
+		return "", fmt.Errorf("save env vault credential namespace: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM app_settings
+WHERE key = ?;
+`, envVaultCredentialNamespaceKey).Scan(&namespace); err != nil {
+		return "", fmt.Errorf("read env vault credential namespace: %w", err)
+	}
+	if strings.TrimSpace(namespace) == "" {
+		return "", fmt.Errorf("env vault credential namespace is empty")
+	}
+	return namespace, nil
 }
 
 func (s *SQLiteStore) SaveAIEnvReviewSettings(ctx context.Context, settings domain.AIEnvReviewSettings) error {
@@ -1504,6 +1544,14 @@ func defaultEnvContributionSettings() domain.EnvContributionSettings {
 		PrivateLocalEnvPatternsEnabled: false,
 		ConsentShown:                   false,
 	}
+}
+
+func newEnvVaultCredentialNamespace() (string, error) {
+	var raw [16]byte
+	if _, err := crand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate env vault credential namespace: %w", err)
+	}
+	return "v1-" + hex.EncodeToString(raw[:]), nil
 }
 
 func envPortAssignmentKey(assignment domain.EnvPortAssignment) string {

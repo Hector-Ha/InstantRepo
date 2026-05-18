@@ -56,9 +56,9 @@ The CLI mirror track covers:
 - installed repo history and credential-free diagnostics
 - Env Vault, contribution settings, AI Env Review settings, and bridge contract metadata
 
-Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. Env Draft generate/save mirror work in [#37](https://github.com/Hector-Ha/InstantRepo/issues/37) is done. Settings and bridge metadata work in [#40](https://github.com/Hector-Ha/InstantRepo/issues/40) is done. The next public slice is [#38](https://github.com/Hector-Ha/InstantRepo/issues/38), which adds installed repo history and diagnostics commands.
+Foundation work in [#35](https://github.com/Hector-Ha/InstantRepo/issues/35) is done. Repository mirror work in [#36](https://github.com/Hector-Ha/InstantRepo/issues/36) is done. Env Draft generate/save mirror work in [#37](https://github.com/Hector-Ha/InstantRepo/issues/37) is done. Settings and bridge metadata work in [#40](https://github.com/Hector-Ha/InstantRepo/issues/40) is done. The current branch implements [#38](https://github.com/Hector-Ha/InstantRepo/issues/38), which adds installed repo history and diagnostics commands, and [#39](https://github.com/Hector-Ha/InstantRepo/issues/39), which adds secret-safe Env Vault commands.
 
-See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34) and remaining child issues [#38](https://github.com/Hector-Ha/InstantRepo/issues/38), [#39](https://github.com/Hector-Ha/InstantRepo/issues/39), and [#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
+See [#34](https://github.com/Hector-Ha/InstantRepo/issues/34), implemented child issues [#38](https://github.com/Hector-Ha/InstantRepo/issues/38) and [#39](https://github.com/Hector-Ha/InstantRepo/issues/39), and remaining child issue [#41](https://github.com/Hector-Ha/InstantRepo/issues/41). See `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md` for the private QA boundary.
 
 ## Project Shape
 
@@ -149,6 +149,20 @@ Run one plan step:
 go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
 ```
 
+List installed repos and setup history:
+
+```bash
+go run ./cmd/instantrepo repo list --json
+go run ./cmd/instantrepo repo details --id 123 --json
+```
+
+Export credential-free repo diagnostics:
+
+```bash
+go run ./cmd/instantrepo repo diagnostics --path C:\path\to\repo --json
+go run ./cmd/instantrepo repo diagnostics --id 123 --json
+```
+
 Generate structured Env Draft JSON:
 
 ```bash
@@ -165,6 +179,26 @@ Save a raw `.env` for repos with one inferred env target:
 
 ```bash
 go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
+```
+
+Manage Env Vault metadata and approvals:
+
+```bash
+go run ./cmd/instantrepo env vault list --json
+go run ./cmd/instantrepo env vault save --provider openai --variable OPENAI_API_KEY --display-name "OpenAI dev key" --stdin --json
+go run ./cmd/instantrepo env vault update --id 123 --display-name "OpenAI work key" --json
+go run ./cmd/instantrepo env vault update --id 123 --stdin --json
+go run ./cmd/instantrepo env vault remove --id 123 --json
+go run ./cmd/instantrepo env vault approve --id 123 --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
+go run ./cmd/instantrepo env vault revoke --approval-id 456 --json
+go run ./cmd/instantrepo env vault status --id 123 --status action_needed --json
+go run ./cmd/instantrepo env vault suppress --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
+```
+
+Reveal an Env Vault value only when deliberate:
+
+```bash
+go run ./cmd/instantrepo env vault reveal --id 123 --confirm-reveal --json
 ```
 
 Show shell and bridge contract metadata:
@@ -221,7 +255,7 @@ Use isolated app metadata:
 go run ./cmd/instantrepo --app-data-dir C:\temp\instantrepo-app-data repo analyze --path C:\path\to\repo
 ```
 
-`INSTANTREPO_APP_DATA_DIR` also works for CLI and Wails launches. The app data path must be absolute and must not point at home, repo root, target repo, or a folder inside the target repo. Bad overrides fail closed instead of silently using normal app metadata.
+`INSTANTREPO_APP_DATA_DIR` also works for CLI and Wails launches. The app data path must be absolute and must not point at home, repo root, target repo, or a folder inside the target repo. Bad overrides fail closed instead of silently using normal app metadata. Env Vault OS credential keys are scoped to the Local App Database identity, so temp app data cannot overwrite, reveal, or delete the default app-data vault credentials by reusing the same SQLite row IDs.
 
 Legacy flags still work for existing scripts:
 
@@ -318,13 +352,13 @@ Current CLI mirror roadmap:
 3. [#36 Repository analyze, import, preflight, and execute CLI](https://github.com/Hector-Ha/InstantRepo/issues/36) is done.
 4. [#37 Env Draft generate and save CLI](https://github.com/Hector-Ha/InstantRepo/issues/37) is done.
 5. [#40 Settings and bridge contract metadata CLI](https://github.com/Hector-Ha/InstantRepo/issues/40) is done.
-6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38)
-7. [#39 Env Vault secret-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/39)
+6. [#38 Installed repo history and diagnostics CLI](https://github.com/Hector-Ha/InstantRepo/issues/38) is implemented in this branch.
+7. [#39 Env Vault secret-safe CLI](https://github.com/Hector-Ha/InstantRepo/issues/39) is implemented in this branch.
 8. [#41 CLI mirror and private QA convention docs](https://github.com/Hector-Ha/InstantRepo/issues/41)
 
 ## Next Work
 
-- Start #38 installed repo history and diagnostics CLI mirrors.
+- Review and finish #38 installed repo history/diagnostics and #39 secret-safe Env Vault CLI mirrors, then continue #41 docs/private QA convention.
 - Keep `.qa-local/` private and ignored; do not commit private QA harness files.
 - Add more manifests, package managers, and topology detectors.
 - Package desktop app for Windows and later macOS.

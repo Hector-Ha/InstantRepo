@@ -36,7 +36,8 @@ func TestEnvVaultStoresServiceCredentialWithoutPlaintextMetadata(t *testing.T) {
 	if resp.Entry.ID == 0 || resp.Entry.Status != domain.EnvVaultStatusReady {
 		t.Fatalf("expected ready entry with ID, got %+v", resp.Entry)
 	}
-	if got := credentials.values[credentialsKeyForEntry(resp.Entry.ID)]; got != "sk-test-secret-value" {
+	credentialKey := vaultCredentialKeyForEntry(t, sqliteStore, resp.Entry.ID)
+	if got := credentials.values[credentialKey]; got != "sk-test-secret-value" {
 		t.Fatalf("expected credential store to receive value, got %q", got)
 	}
 
@@ -91,6 +92,58 @@ func TestEnvVaultDuplicateFingerprintUsesNeutralReview(t *testing.T) {
 	}
 	if second.Entry.ID != first.Entry.ID {
 		t.Fatalf("expected existing entry metadata, got first %+v second %+v", first.Entry, second.Entry)
+	}
+}
+
+func TestEnvVaultCredentialKeysAreIsolatedByAppDataStore(t *testing.T) {
+	ctx := context.Background()
+	firstStore := openServiceTestSQLiteStore(t)
+	defer firstStore.Close()
+	secondStore := openServiceTestSQLiteStore(t)
+	defer secondStore.Close()
+	credentials := newFakeCredentialStore()
+	firstApp := newEnvVaultTestApp(firstStore, firstStore, credentials)
+	secondApp := newEnvVaultTestApp(secondStore, secondStore, credentials)
+
+	first := saveReadyVaultEntry(t, firstApp, "openai", "OPENAI_API_KEY", "sk-first-app-data-secret")
+	second := saveReadyVaultEntry(t, secondApp, "openai", "OPENAI_API_KEY", "sk-second-app-data-secret")
+	if first.ID != 1 || second.ID != 1 {
+		t.Fatalf("test expects separate stores to reuse entry ID 1, got first=%d second=%d", first.ID, second.ID)
+	}
+
+	firstReveal, err := firstApp.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID:   first.ID,
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("first RevealEnvVaultEntry returned error: %v", err)
+	}
+	if firstReveal.Value != "sk-first-app-data-secret" {
+		t.Fatalf("expected first app data value to remain isolated, got %q", firstReveal.Value)
+	}
+	secondReveal, err := secondApp.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID:   second.ID,
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("second RevealEnvVaultEntry returned error: %v", err)
+	}
+	if secondReveal.Value != "sk-second-app-data-secret" {
+		t.Fatalf("expected second app data value, got %q", secondReveal.Value)
+	}
+
+	if err := secondApp.RemoveEnvVaultEntry(ctx, second.ID); err != nil {
+		t.Fatalf("second RemoveEnvVaultEntry returned error: %v", err)
+	}
+	firstReveal, err = firstApp.RevealEnvVaultEntry(ctx, domain.EnvVaultRevealRequest{
+		EntryID:   first.ID,
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("first RevealEnvVaultEntry after second remove returned error: %v", err)
+	}
+	if firstReveal.Value != "sk-first-app-data-secret" {
+		t.Fatalf("expected first app data value after second remove, got %q", firstReveal.Value)
 	}
 }
 
@@ -175,7 +228,7 @@ func TestEnvVaultManagerListReturnsValueFreeUsageAndApprovals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal manager response: %v", err)
 	}
-	for _, forbidden := range []string{"sk-manager-secret-value", credentialsKeyForEntry(entry.ID)} {
+	for _, forbidden := range []string{"sk-manager-secret-value", vaultCredentialKeyForEntry(t, sqliteStore, entry.ID)} {
 		if strings.Contains(string(rawJSON), forbidden) {
 			t.Fatalf("expected manager response to omit %q, got:\n%s", forbidden, string(rawJSON))
 		}
@@ -294,11 +347,12 @@ func TestEnvVaultRemoveDeletesCredentialMetadataUsageAndApprovals(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("RecordEnvVaultUse returned error: %v", err)
 	}
+	credentialKey := vaultCredentialKeyForEntry(t, sqliteStore, entry.ID)
 
 	if err := app.RemoveEnvVaultEntry(ctx, entry.ID); err != nil {
 		t.Fatalf("RemoveEnvVaultEntry returned error: %v", err)
 	}
-	if _, ok := credentials.values[credentialsKeyForEntry(entry.ID)]; ok {
+	if _, ok := credentials.values[credentialKey]; ok {
 		t.Fatalf("expected OS credential value to be deleted")
 	}
 	list, err := app.ListEnvVaultEntries(ctx)
@@ -963,6 +1017,18 @@ func saveReadyVaultEntry(t *testing.T, app *AppService, provider, variable, valu
 		t.Fatalf("SaveEnvVaultCredential returned error: %v", err)
 	}
 	return resp.Entry
+}
+
+func vaultCredentialKeyForEntry(t *testing.T, sqliteStore *store.SQLiteStore, entryID int64) string {
+	t.Helper()
+	entry, err := sqliteStore.EnvVaultEntryByID(context.Background(), entryID)
+	if err != nil {
+		t.Fatalf("EnvVaultEntryByID returned error: %v", err)
+	}
+	if entry.CredentialKey == "" {
+		t.Fatalf("expected stored credential key for entry %d", entryID)
+	}
+	return entry.CredentialKey
 }
 
 type fakeCredentialStore struct {

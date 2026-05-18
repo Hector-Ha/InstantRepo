@@ -45,6 +45,10 @@ type EnvVaultStore interface {
 	IsEnvVaultPromptSuppressed(ctx context.Context, repoPath, targetRelativePath, variableName string) (bool, error)
 }
 
+type EnvVaultCredentialNamespaceStore interface {
+	EnvVaultCredentialNamespace(ctx context.Context) (string, error)
+}
+
 type EnvVaultService struct {
 	store      EnvVaultStore
 	credential CredentialStore
@@ -166,7 +170,11 @@ func (v *EnvVaultService) SaveCredential(ctx context.Context, req domain.EnvVaul
 	if err != nil {
 		return domain.EnvVaultSaveResponse{}, err
 	}
-	key := credentialsKeyForEntry(saved.ID)
+	key, err := v.credentialsKey(ctx, saved.ID)
+	if err != nil {
+		_ = v.store.DeleteEnvVaultEntry(ctx, saved.ID)
+		return domain.EnvVaultSaveResponse{}, err
+	}
 	if err := v.credential.Put(ctx, key, value); err != nil {
 		_ = v.store.DeleteEnvVaultEntry(ctx, saved.ID)
 		return domain.EnvVaultSaveResponse{}, fmt.Errorf("store credential: %w", err)
@@ -564,8 +572,38 @@ func fingerprintCredential(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func credentialsKeyForEntry(entryID int64) string {
-	return fmt.Sprintf("instantrepo-env-vault-entry-%d", entryID)
+func (v *EnvVaultService) credentialsKey(ctx context.Context, entryID int64) (string, error) {
+	namespace := "default"
+	if namespaceStore, ok := v.store.(EnvVaultCredentialNamespaceStore); ok {
+		resolved, err := namespaceStore.EnvVaultCredentialNamespace(ctx)
+		if err != nil {
+			return "", fmt.Errorf("resolve credential namespace: %w", err)
+		}
+		if strings.TrimSpace(resolved) != "" {
+			namespace = resolved
+		}
+	}
+	return namespacedCredentialsKeyForEntry(namespace, entryID), nil
+}
+
+func namespacedCredentialsKeyForEntry(namespace string, entryID int64) string {
+	namespace = credentialNamespaceLabel(namespace)
+	return fmt.Sprintf("instantrepo-env-vault-%s-entry-%d", namespace, entryID)
+}
+
+func credentialNamespaceLabel(namespace string) string {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return "default"
+	}
+	for _, r := range namespace {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		sum := sha256.Sum256([]byte(namespace))
+		return "sha256-" + hex.EncodeToString(sum[:])[:24]
+	}
+	return namespace
 }
 
 func validVaultStatus(status string) bool {

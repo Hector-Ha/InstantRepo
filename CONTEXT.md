@@ -249,6 +249,7 @@ _Avoid_: auto setup, run step
 - Blank **Service Credential** variables may be filled from **User Env Vault** when a ready vault entry already has approval for the repo and env target.
 - Existing non-empty env values are preserved and are not replaced by **User Env Vault** values automatically.
 - **User Env Vault** stores values only in the operating system credential store.
+- Operating system credential keys for **User Env Vault** are scoped by **Local App Database** identity so isolated app-data runs cannot overwrite, reveal, or delete another app-data vault value just because SQLite row IDs match.
 - **User Env Vault** stores **Service Credentials** only, not **Generated Local Secrets** or **Dev Defaults**.
 - **User Env Vault** eligibility is defined by the **Env Default Catalog** and can expand through **Env Catalog Patches**.
 - **Env Catalog Patches** may include **Vault Migration Rules** for provider env name changes.
@@ -450,7 +451,7 @@ _Avoid_: auto setup, run step
 - CLI mirror roadmap covers all current Wails app operations where a command-line equivalent makes sense: analyze/import/clone preflight, installed repos/details, Env Draft generate/save/raw save, Env Vault operations, contribution settings, AI Env Review settings, diagnostics export, execute step, and shell/version info.
 - `OpenDirectory()` is a desktop UI dialog and should not be mirrored literally; CLI commands should use explicit path arguments and help text instead.
 - Public CLI mirror PRD should scope implementation to production-safe CLI/app surfaces only. Private QA shim may be named as a consumer and motivation, but private harness implementation stays out of public PRD/issues.
-- Public CLI mirror roadmap issue: #34. Completed slices: #35 CLI foundation/app-data isolation, #36 repository setup commands, #37 Env Draft commands, and #40 settings/bridge metadata. Remaining implementation slices: #38 installed repos/diagnostics, #39 Env Vault commands, and #41 docs/private QA convention.
+- Public CLI mirror roadmap issue: #34. Completed slices: #35 CLI foundation/app-data isolation, #36 repository setup commands, #37 Env Draft commands, and #40 settings/bridge metadata. Current branch implements #38 installed repos/diagnostics and #39 Env Vault commands. Remaining implementation slice: #41 docs/private QA convention.
 - CLI mirror work should include public-interface integration tests for each command or command group, covering JSON shape, error shape, app-data isolation, and secret redaction without depending on private QA harness code.
 - CLI and Wails should be sibling shells over the same `AppService` and domain types. CLI command handlers should call `AppService` directly rather than calling Wails wrapper methods.
 - CLI command parsing and execution should move out of `cmd/instantrepo/main.go` into an internal CLI/command package so command behavior can be integration-tested without a giant `main`.
@@ -474,6 +475,7 @@ _Avoid_: auto setup, run step
 - App data directory override must resolve to an absolute path, create the directory if missing, and reject dangerous targets such as drive root, home dir, repo root, target repo, or a path inside the target repo being analyzed.
 - Invalid CLI or Wails app data overrides must fail closed with a visible error instead of silently falling back to normal app metadata or a nil Local App Database.
 - CLI vault/settings commands use the same app data directory and operating system credential store behavior as the app by default. Public CLI should not add a fake or in-memory credential backend just for QA; private QA handles fake credentials in its own harness unless a future product-safe credential backend override is explicitly designed.
+- CLI vault commands must preserve credential-key app-data namespacing when `--app-data-dir` or `INSTANTREPO_APP_DATA_DIR` is used; temp app data can share the same OS credential store but not the same credential target keys.
 - Wails dev/QA launches may use `INSTANTREPO_APP_DATA_DIR` to isolate desktop app metadata for smoke checks, while normal double-clicked `InstantRepo.exe` uses default OS app data unless an advanced user deliberately sets the environment variable.
 - App data directory override is a launch-context control, not a normal in-app setting.
 - The agent is the tester and supervisor for a **Chrome-Supervised QA Session**: it makes the final pass/fail judgment from UI behavior, evidence, and scenario brief.

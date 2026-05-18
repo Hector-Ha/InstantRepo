@@ -76,11 +76,11 @@ Completed foundation:
 - `#37` Mirror Env Draft generate and save flows in CLI. Closed.
 - `#40` Mirror settings and bridge contract metadata in CLI. Closed.
 
-Implementation order:
+Implementation state:
 
-1. `#38` Mirror installed repo history and diagnostics in CLI.
-2. `#39` Mirror Env Vault operations in secret-safe CLI.
-3. `#41` Document CLI mirror and private QA convention.
+1. `#38` Mirror installed repo history and diagnostics in CLI. Implemented in current branch, needs review.
+2. `#39` Mirror Env Vault operations in secret-safe CLI. Implemented in current branch, needs review.
+3. `#41` Document CLI mirror and private QA convention. Next after review.
 
 Do not implement private QA harness code in public issues. Public work must stay production-safe.
 
@@ -158,6 +158,20 @@ Run CLI execute:
 go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
 ```
 
+Run CLI installed repo history:
+
+```bash
+go run ./cmd/instantrepo repo list --json
+go run ./cmd/instantrepo repo details --id 123 --json
+```
+
+Run CLI credential-free diagnostics:
+
+```bash
+go run ./cmd/instantrepo repo diagnostics --path C:\path\to\repo --json
+go run ./cmd/instantrepo repo diagnostics --id 123 --json
+```
+
 Run CLI Env Draft generate:
 
 ```bash
@@ -174,6 +188,21 @@ Run CLI raw env save:
 
 ```bash
 go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
+```
+
+Run CLI Env Vault:
+
+```bash
+go run ./cmd/instantrepo env vault list --json
+go run ./cmd/instantrepo env vault save --provider openai --variable OPENAI_API_KEY --display-name "OpenAI dev key" --stdin --json
+go run ./cmd/instantrepo env vault update --id 123 --display-name "OpenAI work key" --json
+go run ./cmd/instantrepo env vault update --id 123 --stdin --json
+go run ./cmd/instantrepo env vault remove --id 123 --json
+go run ./cmd/instantrepo env vault approve --id 123 --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
+go run ./cmd/instantrepo env vault revoke --approval-id 456 --json
+go run ./cmd/instantrepo env vault status --id 123 --status action_needed --json
+go run ./cmd/instantrepo env vault suppress --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
+go run ./cmd/instantrepo env vault reveal --id 123 --confirm-reveal --json
 ```
 
 Run CLI shell info:
@@ -295,6 +324,7 @@ This app inspects and can run code from unknown repos. Be careful.
 - Do not write real secret values into docs or tests.
 - Do not store service credential values in SQLite, logs, issues, PRs, diagnostics, or docs.
 - User Env Vault stores raw values only in the OS credential store. If it is unavailable, fail closed; do not add plaintext fallback.
+- OS credential keys for User Env Vault must be namespaced by Local App Database identity so isolated app data cannot overwrite, reveal, or delete another app-data vault value.
 - SQLite may store Env Vault metadata, fingerprints, approvals, prompt suppressions, and use records only.
 - Vault-backed Env Draft values must stay masked in draft JSON and frontend state; resolve values only at save time.
 - Env Default Catalog rules are data-only. Do not add rule behavior that runs commands or bypasses approval gates.

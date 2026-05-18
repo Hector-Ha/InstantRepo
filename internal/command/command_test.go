@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"instantrepo/internal/domain"
 )
@@ -1737,6 +1738,499 @@ func TestAppDataDirRejectsRepoRootWhenLaunchedOutsideSourceTree(t *testing.T) {
 	}
 }
 
+func TestRepoListJSONReturnsDomainResponseAndPassesIsolatedAppData(t *testing.T) {
+	appDataDir := filepath.Join(t.TempDir(), "app-data")
+	var stdout bytes.Buffer
+	var gotConfig AppConfig
+	fake := &fakeApp{
+		listInstalledReposResp: domain.InstalledRepoManagerResponse{
+			Repos: []domain.InstalledRepoSummary{{
+				ID:             42,
+				ProjectName:    "demo",
+				LocalPath:      filepath.Clean(`C:\work\demo`),
+				Status:         domain.InstalledRepoStatusAnalyzed,
+				LastActivityAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+			}},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"repo", "list", "--app-data-dir", appDataDir, "--json"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			gotConfig = config
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if gotConfig.AppDataDir != filepath.Clean(appDataDir) {
+		t.Fatalf("app data dir = %q", gotConfig.AppDataDir)
+	}
+	if _, err := os.Stat(appDataDir); err != nil {
+		t.Fatalf("app data dir not created: %v", err)
+	}
+	if !fake.listInstalledReposCalled {
+		t.Fatalf("ListInstalledRepos was not called")
+	}
+	var payload struct {
+		OK   bool                                `json:"ok"`
+		Data domain.InstalledRepoManagerResponse `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if !payload.OK || len(payload.Data.Repos) != 1 || payload.Data.Repos[0].ID != 42 {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestRepoDetailsHumanOutputIncludesSetupSessions(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeApp{
+		installedRepoDetailsResp: domain.InstalledRepoDetailsResponse{
+			Repo: domain.InstalledRepoSummary{
+				ID:          7,
+				ProjectName: "demo",
+				LocalPath:   filepath.Clean(`C:\work\demo`),
+				Status:      domain.InstalledRepoStatusAnalyzed,
+			},
+			SetupSessions: []domain.SetupSessionSummary{{
+				ID:              9,
+				InstalledRepoID: 7,
+				RepoPath:        filepath.Clean(`C:\work\demo`),
+				Status:          domain.SetupSessionStatusSucceeded,
+			}},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"repo", "details", "--id", "7"},
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if fake.installedRepoDetailsID != 7 {
+		t.Fatalf("details id = %d", fake.installedRepoDetailsID)
+	}
+	output := stdout.String()
+	for _, want := range []string{"Repo #7", "demo", "Setup sessions: 1", "succeeded"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, `"ok"`) {
+		t.Fatalf("human output should not be JSON: %s", output)
+	}
+}
+
+func TestRepoDiagnosticsJSONAcceptsPathOrIDAndReturnsDomainExport(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	for _, tc := range []struct {
+		name string
+		args []string
+		want domain.RepoDiagnosticExportRequest
+	}{
+		{
+			name: "path",
+			args: []string{"repo", "diagnostics", "--path", repoPath, "--json"},
+			want: domain.RepoDiagnosticExportRequest{LocalPath: repoPath},
+		},
+		{
+			name: "id",
+			args: []string{"repo", "diagnostics", "--id", "11", "--json"},
+			want: domain.RepoDiagnosticExportRequest{InstalledRepoID: 11},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			fake := &fakeApp{
+				exportRepoDiagnosticsResp: domain.RepoDiagnosticExport{
+					SchemaVersion: "repo-diagnostic-export/v1",
+					Repo: domain.RepoDiagnosticRepoIdentity{
+						ID:        11,
+						LocalPath: repoPath,
+						Status:    domain.InstalledRepoStatusAnalyzed,
+					},
+					SetupSessions: []domain.RepoDiagnosticSetupSession{{
+						ID: 3,
+						Steps: []domain.RepoDiagnosticStep{{
+							StepID: "install",
+							Log:    "[REDACTED]",
+						}},
+					}},
+				},
+			}
+
+			exitCode := Run(context.Background(), Options{
+				Args:    tc.args,
+				Stdout:  &stdout,
+				Stderr:  &bytes.Buffer{},
+				Version: defaultTestVersion(),
+				NewApp: func(config AppConfig) (App, func() error, error) {
+					return fake, nil, nil
+				},
+			})
+
+			if exitCode != 0 {
+				t.Fatalf("exit code = %d", exitCode)
+			}
+			if fake.exportRepoDiagnosticsReq != tc.want {
+				t.Fatalf("diagnostic req = %+v, want %+v", fake.exportRepoDiagnosticsReq, tc.want)
+			}
+			var payload struct {
+				OK   bool                        `json:"ok"`
+				Data domain.RepoDiagnosticExport `json:"data"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+				t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+			}
+			if !payload.OK || payload.Data.SchemaVersion == "" || payload.Data.Repo.ID != 11 {
+				t.Fatalf("payload = %+v", payload)
+			}
+		})
+	}
+}
+
+func TestRepoDiagnosticsMissingTargetJSONReturnsStructuredError(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"repo", "diagnostics", "--json"},
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &stderr,
+		Version: defaultTestVersion(),
+		NewApp: func(AppConfig) (App, func() error, error) {
+			t.Fatal("missing diagnostics target must not create app")
+			return nil, nil, nil
+		},
+	})
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0")
+	}
+	var payload struct {
+		Error commandError `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stderr: %v\n%s", err, stderr.String())
+	}
+	if payload.Error.Code != "missing_target" {
+		t.Fatalf("error = %+v", payload.Error)
+	}
+}
+
+func TestEnvVaultSaveUsesStdinAndDoesNotPrintSecretByDefault(t *testing.T) {
+	const secretValue = "sk-command-secret-value"
+	var stdout, stderr bytes.Buffer
+	fake := &fakeApp{
+		saveEnvVaultCredentialResp: domain.EnvVaultSaveResponse{
+			Entry: domain.EnvVaultEntry{
+				ID:                  5,
+				Provider:            "openai",
+				VariableName:        "OPENAI_API_KEY",
+				DisplayName:         "OpenAI dev key",
+				FingerprintFragment: "abc123def456",
+				Status:              domain.EnvVaultStatusReady,
+			},
+		},
+	}
+
+	exitCode := Run(context.Background(), Options{
+		Args:    []string{"env", "vault", "save", "--provider", "openai", "--variable", "OPENAI_API_KEY", "--display-name", "OpenAI dev key", "--stdin", "--json"},
+		Stdin:   strings.NewReader(secretValue),
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+		Version: defaultTestVersion(),
+		NewApp: func(config AppConfig) (App, func() error, error) {
+			return fake, nil, nil
+		},
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d stderr=%s", exitCode, stderr.String())
+	}
+	if fake.saveEnvVaultCredentialReq.Value != secretValue || fake.saveEnvVaultCredentialReq.Provider != "openai" || fake.saveEnvVaultCredentialReq.VariableName != "OPENAI_API_KEY" {
+		t.Fatalf("save req = %+v", fake.saveEnvVaultCredentialReq)
+	}
+	if strings.Contains(stdout.String(), secretValue) || strings.Contains(stderr.String(), secretValue) {
+		t.Fatalf("secret leaked stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Data domain.EnvVaultSaveResponse `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if payload.Data.Entry.ID != 5 || payload.Data.Entry.FingerprintFragment != "abc123def456" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestEnvVaultMetadataCommandsCallAppAndReturnValueFreeJSON(t *testing.T) {
+	repoPath := filepath.Clean(t.TempDir())
+	cases := []struct {
+		name   string
+		args   []string
+		stdin  string
+		assert func(t *testing.T, fake *fakeApp, output string)
+	}{
+		{
+			name: "list",
+			args: []string{"env", "vault", "list", "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				if !fake.listEnvVaultEntriesCalled {
+					t.Fatalf("ListEnvVaultEntries was not called")
+				}
+			},
+		},
+		{
+			name:  "update",
+			args:  []string{"env", "vault", "update", "--id", "5", "--display-name", "Renamed", "--stdin", "--json"},
+			stdin: "sk-updated-secret-value",
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				if fake.updateEnvVaultEntryReq.EntryID != 5 || fake.updateEnvVaultEntryReq.DisplayName != "Renamed" || !fake.updateEnvVaultEntryReq.UpdateValue {
+					t.Fatalf("update req = %+v", fake.updateEnvVaultEntryReq)
+				}
+				if strings.Contains(output, "sk-updated-secret-value") {
+					t.Fatalf("updated secret leaked: %s", output)
+				}
+			},
+		},
+		{
+			name: "remove",
+			args: []string{"env", "vault", "remove", "--id", "5", "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				if fake.removeEnvVaultEntryID != 5 {
+					t.Fatalf("remove id = %d", fake.removeEnvVaultEntryID)
+				}
+			},
+		},
+		{
+			name: "approve",
+			args: []string{"env", "vault", "approve", "--id", "5", "--repo-path", repoPath, "--target", ".env", "--variable", "OPENAI_API_KEY", "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				got := fake.approveEnvVaultEntryArg
+				if got.EntryID != 5 || got.RepoPath != repoPath || got.TargetRelativePath != ".env" || got.VariableName != "OPENAI_API_KEY" {
+					t.Fatalf("approval = %+v", got)
+				}
+			},
+		},
+		{
+			name: "revoke",
+			args: []string{"env", "vault", "revoke", "--approval-id", "8", "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				if fake.revokeEnvVaultApprovalID != 8 {
+					t.Fatalf("approval id = %d", fake.revokeEnvVaultApprovalID)
+				}
+			},
+		},
+		{
+			name: "status",
+			args: []string{"env", "vault", "status", "--id", "5", "--status", domain.EnvVaultStatusActionNeeded, "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				if fake.markEnvVaultEntryStatusID != 5 || fake.markEnvVaultEntryStatusValue != domain.EnvVaultStatusActionNeeded {
+					t.Fatalf("status args = %d %q", fake.markEnvVaultEntryStatusID, fake.markEnvVaultEntryStatusValue)
+				}
+			},
+		},
+		{
+			name: "suppress",
+			args: []string{"env", "vault", "suppress", "--repo-path", repoPath, "--target", ".env", "--variable", "OPENAI_API_KEY", "--json"},
+			assert: func(t *testing.T, fake *fakeApp, output string) {
+				t.Helper()
+				got := fake.suppressEnvVaultPromptArg
+				if got.RepoPath != repoPath || got.TargetRelativePath != ".env" || got.VariableName != "OPENAI_API_KEY" {
+					t.Fatalf("suppression = %+v", got)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			fake := &fakeApp{
+				listEnvVaultEntriesResp: domain.EnvVaultManagerResponse{
+					Entries: []domain.EnvVaultManagerEntry{{
+						EnvVaultEntry: domain.EnvVaultEntry{
+							ID:                  5,
+							Provider:            "openai",
+							VariableName:        "OPENAI_API_KEY",
+							DisplayName:         "OpenAI dev key",
+							FingerprintFragment: "abc123def456",
+							Status:              domain.EnvVaultStatusReady,
+						},
+					}},
+				},
+				updateEnvVaultEntryResp: domain.EnvVaultSaveResponse{
+					Entry: domain.EnvVaultEntry{ID: 5, DisplayName: "Renamed", FingerprintFragment: "def456abc123"},
+				},
+			}
+
+			exitCode := Run(context.Background(), Options{
+				Args:    tc.args,
+				Stdin:   strings.NewReader(tc.stdin),
+				Stdout:  &stdout,
+				Stderr:  &stderr,
+				Version: defaultTestVersion(),
+				NewApp: func(config AppConfig) (App, func() error, error) {
+					return fake, nil, nil
+				},
+			})
+
+			if exitCode != 0 {
+				t.Fatalf("exit code = %d stderr=%s", exitCode, stderr.String())
+			}
+			output := stdout.String() + stderr.String()
+			if strings.Contains(output, "sk-updated-secret-value") {
+				t.Fatalf("secret leaked: %s", output)
+			}
+			var payload struct {
+				OK bool `json:"ok"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+				t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+			}
+			if !payload.OK {
+				t.Fatalf("ok = false")
+			}
+			tc.assert(t, fake, output)
+		})
+	}
+}
+
+func TestEnvVaultRevealRequiresConfirmationAndOnlyRevealPrintsValue(t *testing.T) {
+	const secretValue = "sk-reveal-secret-value"
+	t.Run("missing confirmation", func(t *testing.T) {
+		var stderr bytes.Buffer
+		fake := &fakeApp{revealEnvVaultEntryResp: domain.EnvVaultRevealResponse{EntryID: 5, Value: secretValue}}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"env", "vault", "reveal", "--id", "5", "--json"},
+			Stdout:  &bytes.Buffer{},
+			Stderr:  &stderr,
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0")
+		}
+		if fake.revealEnvVaultEntryReq.EntryID != 0 {
+			t.Fatalf("reveal should not be called without confirmation")
+		}
+		if strings.Contains(stderr.String(), secretValue) {
+			t.Fatalf("secret leaked: %s", stderr.String())
+		}
+		var payload struct {
+			Error commandError `json:"error"`
+		}
+		if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stderr: %v\n%s", err, stderr.String())
+		}
+		if payload.Error.Code != "reveal_not_confirmed" {
+			t.Fatalf("error = %+v", payload.Error)
+		}
+	})
+
+	t.Run("confirmed JSON reveal", func(t *testing.T) {
+		var stdout bytes.Buffer
+		fake := &fakeApp{
+			revealEnvVaultEntryResp: domain.EnvVaultRevealResponse{
+				EntryID:     5,
+				Value:       secretValue,
+				RevealUntil: time.Date(2026, 5, 18, 12, 0, 30, 0, time.UTC),
+			},
+		}
+
+		exitCode := Run(context.Background(), Options{
+			Args:    []string{"env", "vault", "reveal", "--id", "5", "--confirm-reveal", "--json"},
+			Stdout:  &stdout,
+			Stderr:  &bytes.Buffer{},
+			Version: defaultTestVersion(),
+			NewApp: func(config AppConfig) (App, func() error, error) {
+				return fake, nil, nil
+			},
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d", exitCode)
+		}
+		if fake.revealEnvVaultEntryReq.EntryID != 5 || !fake.revealEnvVaultEntryReq.Confirmed {
+			t.Fatalf("reveal req = %+v", fake.revealEnvVaultEntryReq)
+		}
+		var payload struct {
+			Data domain.EnvVaultRevealResponse `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+		if payload.Data.Value != secretValue {
+			t.Fatalf("payload = %+v", payload)
+		}
+	})
+}
+
+func TestRepoListPersistsAnalyzeWithIsolatedAppData(t *testing.T) {
+	appDataDir := filepath.Join(t.TempDir(), "app-data")
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "go.mod"), []byte("module example.com/cli\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	run := func(args []string, out any) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		exitCode := Run(context.Background(), Options{
+			Args:    append(args, "--app-data-dir", appDataDir, "--json"),
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			Version: defaultTestVersion(),
+		})
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d stderr=%s", exitCode, stderr.String())
+		}
+		if err := json.Unmarshal(stdout.Bytes(), out); err != nil {
+			t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+		}
+	}
+
+	var analyzePayload struct {
+		Data domain.AnalyzeResponse `json:"data"`
+	}
+	run([]string{"repo", "analyze", "--path", repoPath}, &analyzePayload)
+	if analyzePayload.Data.Source.Path != repoPath {
+		t.Fatalf("analyze source = %+v", analyzePayload.Data.Source)
+	}
+
+	var listPayload struct {
+		Data domain.InstalledRepoManagerResponse `json:"data"`
+	}
+	run([]string{"repo", "list"}, &listPayload)
+	if len(listPayload.Data.Repos) != 1 || listPayload.Data.Repos[0].LocalPath != repoPath {
+		t.Fatalf("installed repos = %+v", listPayload.Data.Repos)
+	}
+}
+
 type fakeApp struct {
 	analyzeReq                         domain.AnalyzeRequest
 	analyzeResp                        domain.AnalyzeResponse
@@ -1774,6 +2268,26 @@ type fakeApp struct {
 	saveAIEnvReviewSettingsCalled      bool
 	saveAIEnvReviewSettingsArg         domain.AIEnvReviewSettings
 	saveAIEnvReviewSettingsResp        domain.AIEnvReviewSettings
+	listInstalledReposCalled           bool
+	listInstalledReposResp             domain.InstalledRepoManagerResponse
+	installedRepoDetailsID             int64
+	installedRepoDetailsResp           domain.InstalledRepoDetailsResponse
+	exportRepoDiagnosticsReq           domain.RepoDiagnosticExportRequest
+	exportRepoDiagnosticsResp          domain.RepoDiagnosticExport
+	saveEnvVaultCredentialReq          domain.EnvVaultSaveRequest
+	saveEnvVaultCredentialResp         domain.EnvVaultSaveResponse
+	listEnvVaultEntriesCalled          bool
+	listEnvVaultEntriesResp            domain.EnvVaultManagerResponse
+	revealEnvVaultEntryReq             domain.EnvVaultRevealRequest
+	revealEnvVaultEntryResp            domain.EnvVaultRevealResponse
+	updateEnvVaultEntryReq             domain.EnvVaultUpdateRequest
+	updateEnvVaultEntryResp            domain.EnvVaultSaveResponse
+	removeEnvVaultEntryID              int64
+	approveEnvVaultEntryArg            domain.EnvVaultApproval
+	markEnvVaultEntryStatusID          int64
+	markEnvVaultEntryStatusValue       string
+	revokeEnvVaultApprovalID           int64
+	suppressEnvVaultPromptArg          domain.EnvVaultPromptSuppression
 }
 
 func (f *fakeApp) Analyze(ctx context.Context, req domain.AnalyzeRequest) (domain.AnalyzeResponse, error) {
@@ -1857,6 +2371,67 @@ func (f *fakeApp) SaveAIEnvReviewSettings(ctx context.Context, settings domain.A
 	f.saveAIEnvReviewSettingsCalled = true
 	f.saveAIEnvReviewSettingsArg = settings
 	return f.saveAIEnvReviewSettingsResp, nil
+}
+
+func (f *fakeApp) ListInstalledRepos(ctx context.Context) (domain.InstalledRepoManagerResponse, error) {
+	f.listInstalledReposCalled = true
+	return f.listInstalledReposResp, nil
+}
+
+func (f *fakeApp) InstalledRepoDetails(ctx context.Context, installedRepoID int64) (domain.InstalledRepoDetailsResponse, error) {
+	f.installedRepoDetailsID = installedRepoID
+	return f.installedRepoDetailsResp, nil
+}
+
+func (f *fakeApp) ExportRepoDiagnostics(ctx context.Context, req domain.RepoDiagnosticExportRequest) (domain.RepoDiagnosticExport, error) {
+	f.exportRepoDiagnosticsReq = req
+	return f.exportRepoDiagnosticsResp, nil
+}
+
+func (f *fakeApp) SaveEnvVaultCredential(ctx context.Context, req domain.EnvVaultSaveRequest) (domain.EnvVaultSaveResponse, error) {
+	f.saveEnvVaultCredentialReq = req
+	return f.saveEnvVaultCredentialResp, nil
+}
+
+func (f *fakeApp) ListEnvVaultEntries(ctx context.Context) (domain.EnvVaultManagerResponse, error) {
+	f.listEnvVaultEntriesCalled = true
+	return f.listEnvVaultEntriesResp, nil
+}
+
+func (f *fakeApp) RevealEnvVaultEntry(ctx context.Context, req domain.EnvVaultRevealRequest) (domain.EnvVaultRevealResponse, error) {
+	f.revealEnvVaultEntryReq = req
+	return f.revealEnvVaultEntryResp, nil
+}
+
+func (f *fakeApp) UpdateEnvVaultEntry(ctx context.Context, req domain.EnvVaultUpdateRequest) (domain.EnvVaultSaveResponse, error) {
+	f.updateEnvVaultEntryReq = req
+	return f.updateEnvVaultEntryResp, nil
+}
+
+func (f *fakeApp) RemoveEnvVaultEntry(ctx context.Context, entryID int64) error {
+	f.removeEnvVaultEntryID = entryID
+	return nil
+}
+
+func (f *fakeApp) ApproveEnvVaultEntry(ctx context.Context, approval domain.EnvVaultApproval) error {
+	f.approveEnvVaultEntryArg = approval
+	return nil
+}
+
+func (f *fakeApp) MarkEnvVaultEntryStatus(ctx context.Context, entryID int64, status string) error {
+	f.markEnvVaultEntryStatusID = entryID
+	f.markEnvVaultEntryStatusValue = status
+	return nil
+}
+
+func (f *fakeApp) RevokeEnvVaultApproval(ctx context.Context, approvalID int64) error {
+	f.revokeEnvVaultApprovalID = approvalID
+	return nil
+}
+
+func (f *fakeApp) SuppressEnvVaultPrompt(ctx context.Context, suppression domain.EnvVaultPromptSuppression) error {
+	f.suppressEnvVaultPromptArg = suppression
+	return nil
 }
 
 func defaultTestVersion() VersionInfo {
