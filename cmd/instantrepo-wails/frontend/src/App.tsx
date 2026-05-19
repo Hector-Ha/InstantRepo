@@ -44,6 +44,7 @@ import type {
 } from "./types";
 import { AppNav, type AppView } from "./AppNav";
 import { EnvDraftPanel } from "./EnvDraftPanel";
+import { EnvContributionConsentPanel } from "./EnvContributionConsentPanel";
 import { EnvVaultManager } from "./EnvVaultManager";
 import { EnvVaultPrompt } from "./EnvVaultPrompt";
 import { SettingsView } from "./SettingsView";
@@ -1397,6 +1398,18 @@ export default function App() {
               Browse
             </button>
           </div>
+
+          {contributionSettings &&
+          !contributionSettings.settings.consentShown ? (
+            <EnvContributionConsentPanel
+              publicEnabled={consentPublicEnabled}
+              loading={contributionLoading}
+              onPublicEnabledChange={setConsentPublicEnabled}
+              onSave={() =>
+                void handleRecordContributionConsent(consentPublicEnabled)
+              }
+            />
+          ) : null}
         </section>
 
         {/* ── Section 2: Analysis Summary ── */}
@@ -1692,40 +1705,6 @@ export default function App() {
           />
         ) : null}
 
-        {contributionSettings &&
-        !contributionSettings.settings.consentShown &&
-        activeView !== "settings" ? (
-          <div className="modal-backdrop" role="presentation">
-            <section className="vault-prompt" role="dialog" aria-modal="true">
-              <div className="section-heading">
-                <div>
-                  <h2>Env Pattern Contribution</h2>
-                  <p>Share value-free env names from confirmed public repos.</p>
-                </div>
-              </div>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={consentPublicEnabled}
-                  onChange={(event) =>
-                    setConsentPublicEnabled(event.currentTarget.checked)
-                  }
-                />
-                <span>Public repos</span>
-              </label>
-              <div className="vault-prompt-actions">
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleRecordContributionConsent(consentPublicEnabled)
-                  }
-                >
-                  Save choice
-                </button>
-              </div>
-            </section>
-          </div>
-        ) : null}
       </main>
     </div>
   );

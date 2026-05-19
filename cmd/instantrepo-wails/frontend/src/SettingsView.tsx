@@ -4,6 +4,7 @@ import type {
   EnvContributionSettings,
   EnvContributionSettingsResponse,
 } from "./types";
+import { EnvContributionConsentPanel } from "./EnvContributionConsentPanel";
 
 function queueLabel(count: number) {
   return count === 1 ? "1 queued" : `${count} queued`;
@@ -57,25 +58,12 @@ export function SettingsView({
       ) : (
         <div className="settings-layout">
           {!settings.consentShown ? (
-            <section className="settings-panel consent-panel">
-              <h3>Env Pattern Contribution</h3>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={consentPublicEnabled}
-                  onChange={(event) =>
-                    setConsentPublicEnabled(event.currentTarget.checked)
-                  }
-                />
-                <span>Public repos</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => onRecordConsent(consentPublicEnabled)}
-              >
-                Save choice
-              </button>
-            </section>
+            <EnvContributionConsentPanel
+              publicEnabled={consentPublicEnabled}
+              loading={loading}
+              onPublicEnabledChange={setConsentPublicEnabled}
+              onSave={() => onRecordConsent(consentPublicEnabled)}
+            />
           ) : null}
 
           <section className="settings-panel">

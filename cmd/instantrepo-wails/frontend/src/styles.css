@@ -1026,6 +1026,11 @@ select {
   color: var(--text-secondary);
 }
 
+.contribution-consent-panel {
+  border-color: var(--border-active);
+  background: var(--accent-glow);
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
