@@ -153,31 +153,31 @@ User-triggered export of setup diagnostics for one installed repo.
 _Avoid_: telemetry, cloud log
 
 **QA Mode Browser Harness**:
-Local-only automated QA path where an agent controls the app UI in Chrome while actions execute through the real InstantRepo backend against real local files and metadata.
+Private/local automated QA path used only when the tester asks for QA work.
 _Avoid_: online demo test, mock-only UI test, full desktop remote control
 
 **Chrome-Supervised QA Session**:
-Agent-supervised QA run where Codex controls the QA UI through the user's Chrome plugin while setup actions go through a private/local shim and production-safe InstantRepo CLI surfaces.
+Agent-supervised private/local QA run using the browser and production-safe InstantRepo surfaces.
 _Avoid_: Chrome-only simulation, raw browser script driving shell, shipped production debug mode
 
 **Private QA Shim**:
-Private/local command-runner used by **QA Mode Browser Harness** to map known Wails-style frontend method calls to production-safe InstantRepo CLI commands.
+Private/local adapter outside public app code, used only by tester-approved QA.
 _Avoid_: public debug server, QA backdoor, raw shell endpoint
 
 **Wails Smoke Check**:
-Small final check that the packaged Wails desktop window opens and renders the main app shell after **QA Mode Browser Harness** passes.
+Small local check that the packaged Wails desktop window opens and renders the main app shell.
 _Avoid_: full desktop automation suite, replacement for behavior QA
 
 **QA Evidence Bundle**:
-Value-safe local output from an automated QA run, such as pass/fail results, screenshots, action logs, and created-file summaries.
+Value-safe local/private output from a QA run.
 _Avoid_: raw secret dump, full repo upload, telemetry
 
 **QA Scenario Slice**:
-Small named QA flow that an agent can run independently, such as clone preflight, Env Draft save, Vault reuse, contribution settings, or command execution.
+Small private/local QA brief that a tester may ask an agent to run independently.
 _Avoid_: giant end-to-end script, vague manual checklist
 
 **QA Plan Preview**:
-Agent-only preflight output that explains what a QA runner plans to touch before a run, such as target repo, scenario list, allowed actions, network policy, file-change policy, temp folders, cleanup plan, and evidence paths.
+Private/local preflight summary of intended QA scope and risk.
 _Avoid_: normal user feature, expected-result oracle, product behavior assertion
 
 **Tester**:
@@ -404,54 +404,20 @@ _Avoid_: auto setup, run step
 - **Installed Repos** are managed in a dedicated app view separate from the main clone/setup view.
 - **User Env Vault** values, approvals, **Vault Use Records**, and action-needed credentials are managed in **Vault Manager**, not crowded into the main clone/setup flow.
 - App settings, including **Env Pattern Contribution**, **AI Advisor**, and catalog version details, live in a dedicated settings view.
-- **QA Mode Browser Harness** is the primary automated QA path for product behavior because it drives the real backend, filesystem, **Local App Database**, Env Draft, and Vault flows while remaining inspectable through **Chrome-Supervised QA Session**.
-- **Chrome-Supervised QA Session** is the main way agents run **QA Scenario Slices**: the CLI runner opens or prints a local QA URL for Chrome, then the agent clicks, inspects DOM/screenshots, and judges expected versus actual behavior.
-- The QA runner should auto-open Chrome to the local QA URL when possible and also print the URL, per-run token, run folder, and evidence folder as fallback for agent recovery and manual inspection.
-- Chrome does not execute setup commands directly during QA; browser actions call the **Private QA Shim**, which maps known frontend method calls to production-safe InstantRepo CLI commands.
-- **Wails Smoke Check** complements **QA Mode Browser Harness** and verifies packaged desktop rendering, but it is not the main behavior test surface.
-- **Private QA Shim** lives in `.qa-local` or a private QA repo, binds only to loopback when needed, requires a per-run token, and exposes only typed Wails-style method mappings needed for QA.
-- **Private QA Shim** activation must not be controlled by analyzed repo files, repo `.env` files, project scripts, or any state inside the target repo.
-- **Private QA Shim** must not expose a raw shell command interface; setup commands may run only through production-safe CLI commands with approval rules intact.
-- **QA Mode Browser Harness** may use a per-scenario run allowlist so automated QA can run bounded setup steps such as env save or dependency install while blocking long-running launch commands by default.
-- Long-running dev server commands are blocked by default in private QA for now; launch-flow QA is deferred until a separate long-running command plan is defined.
-- Private QA may visually inspect launch/dev-server steps, risk labels, disabled states, and approval prompts without executing them; reports should state that launch execution was not tested.
-- **QA Mode Browser Harness** runs as supervised QA by default: the agent observes each step, decides whether the outcome matches the scenario, and escalates mismatches before continuing.
-- **QA Mode Browser Harness** uses small named **QA Scenario Slices** so a maintainer can ask an agent to run only the relevant slice without executing the full suite.
-- The QA runner requires explicit scenario paths or ids; it should not default to running every **QA Scenario Slice** unless the caller names the full intended set.
-- **QA Scenario Slices** live in private/local QA workspace by default, such as `.qa-local/scenarios`, so security-sensitive QA context is not committed to the public InstantRepo repo.
-- **QA Scenario Slices** are YAML files with PRD-like natural-language test briefs so humans and agents have full context for judgment, not only machine-style assertions.
-- The QA runner should parse only safety and routing metadata from **QA Scenario Slice** YAML, such as id, target repo, allowed actions, blocked actions, retention hints, and evidence needs.
-- **QA Scenario Slice** bodies may describe objectives, expected behavior, warning signs, manual inspection notes, and edge cases in prose, but must not contain arbitrary shell commands or executable hook code.
-- **QA Scenario Slice** YAML may include allowed and denied approvals, such as risky setup steps that may be approved after agent/tester review and long-running launch steps that should remain blocked.
-- **QA Plan Preview** describes planned actions and risk surface only; expected product behavior belongs in the **QA Scenario Slice** brief and actual results belong in the session run report.
-- **QA Scenario Slice** YAML may include feature/version requirements so agents can tell whether a scenario applies to the current InstantRepo build; unmet requirements should warn or block by scenario policy rather than silently failing as product bugs.
-- **QA Scenario Slice** YAML may reference known GitHub issues so agents can distinguish expected unfinished work from new regressions while still verifying whether known problems are now fixed.
-- **QA Scenario Slice** YAML may include `blockedBy` or `dependsOn` metadata, and the agent should read all selected scenarios before choosing the best run order based on dependencies, risk, and current evidence.
-- QA runner should record actual scenario run order and why; it should not blindly follow file order unless the tester explicitly asks.
-- Tester may ask to run a named QA pack such as an AltShift pack; the agent expands the pack into explicit scenario ids, reads them all, chooses run order, and records the exact ids. QA must not silently run every scenario in the workspace.
-- Private/local QA packs live under `.qa-local/packs` by convention and can define scenario ids/files, target repo, default workspace, default fake credentials, and default network/action policy; individual scenarios can add or override details.
-- During a QA run, the runner should best-effort fetch known GitHub issue title/status when network and auth are available because most QA runs already need network, but issue lookup failure must not block local QA.
-- Future QA tooling may help initialize **QA Scenario Slice** YAML from issues or handoffs, but first implementation should favor hand-written scenarios so test intent stays clear.
-- Private/local QA runner CLI supports maintainer/agent modes: `preview` for **QA Plan Preview**, `run` for **Chrome-Supervised QA Session**, `report` to reopen prior evidence by run id, and `clean` to prune QA runs now.
-- Public GitHub issues for QA support should cover only production-safe app/CLI surfaces, such as CLI subcommands, JSON/error contracts, app-data isolation, frontend bridge contract stability, and `.qa-local` convention docs; private QA harness implementation issues belong in the private/local QA workspace.
-- After the QA design settles, public `AGENTS.md` should include a minimal `.qa-local` convention note: it is ignored, agents may use it only when the tester asks for QA, files from it must not be committed, and public issues must not include secrets or private harness details.
-- Private/local QA harness implementation lives outside committed production code, preferably in gitignored `.qa-local` or a private QA repo cloned there.
-- Normal user release builds should not include private/local QA harness files or artifacts.
-- QA harness design notes may temporarily live in public `CONTEXT.md` while the design is being grilled, but implementation details should move to `.qa-local` or a private QA repo once the harness exists so the public repo keeps production code and policy only.
-- QA runs may test uncommitted InstantRepo changes. The run report records app commit, branch, dirty status, and changed file list instead of requiring a clean tree.
-- Official private QA may run on a dirty worktree for local change verification, but release verification should require a clean tree. If tracked or relevant untracked files change after pinned builds are created, the session is invalidated and must be rerun.
-- Private/local QA code should drive InstantRepo through real frontend flow and production-safe CLI surfaces instead of adding a QA-only backdoor.
-- Primary private/local QA interaction path is a `.qa-local` localhost command-runner shim: Chrome loads the real frontend, injected `window.go.main.App` methods call the private shim, and the shim maps known Wails-style methods to production-safe InstantRepo CLI commands.
-- The private QA shim binds to `127.0.0.1` on a random port, uses a per-run token, exposes only known typed method endpoints, never exposes a raw shell command endpoint, logs method calls and command provenance, and stops after the QA session.
-- If the private QA shim is not practical for a scenario, agents may use manual-command fallback: click the Chrome UI, run the exact scenario command separately, and mark the report as `manual-command-fallback` because it is not a full frontend-backend interaction check.
-- Missing private shim or CLI coverage is not automatically an InstantRepo product bug. Agents must inspect current Wails methods, frontend calls, and CLI support to classify the gap as product bug, missing safe CLI surface, private QA harness gap, or scenario out of scope.
-- CLI coverage should grow toward covering most safe InstantRepo operations so agents can interact with the app easily, but missing CLI support can be deferred when the main app behavior exists and the scenario is not blocked.
-- Current Wails app operations should be mirrored into public CLI commands where useful for agent and user operation, so private QA can drive real frontend flow through a Wails-style shim without adding a QA backdoor.
+- Private/local QA may use real UI flow and production-safe public CLI/API surfaces, but the public app must not add QA-only backdoors, hidden debug bridges, raw shell endpoints, approval bypasses, or shipped QA overlays.
+- Public GitHub issues for QA support cover production-safe app/CLI surfaces only: CLI subcommands, JSON/error contracts, app-data isolation, frontend bridge contract stability, and `.qa-local` convention docs.
+- Private QA harness implementation, scenario packs, run reports, screenshots, logs, evidence, and security-sensitive assumptions stay in `.qa-local` or a private QA repo and must not be copied into public docs or issues.
+- `.qa-local/` must remain gitignored, private, and used only when the tester asks for QA work.
+- Public issue text created from QA must be credential-free and contain only product behavior, reproduction steps, expected versus actual result, and redacted evidence summaries.
+- Normal user release builds must not include private/local QA files, overlays, reports, screenshots, evidence, or shim code.
+- Missing private QA harness support is not automatically an InstantRepo product bug; classify gaps against public product behavior and safe CLI coverage.
+- Current Wails app operations are mirrored into public CLI commands where command-line operation is useful for agents and users, while avoiding QA-only app surfaces.
 - CLI mirroring is a product feature, not a QA-only feature: users and agents can operate InstantRepo safely through it, and private QA is only one consumer.
 - CLI mirror roadmap covers all current Wails app operations where a command-line equivalent makes sense: analyze/import/clone preflight, installed repos/details, Env Draft generate/save/raw save, Env Vault operations, contribution settings, AI Env Review settings, diagnostics export, execute step, and shell/version info.
 - `OpenDirectory()` is a desktop UI dialog and should not be mirrored literally; CLI commands should use explicit path arguments and help text instead.
-- Public CLI mirror PRD should scope implementation to production-safe CLI/app surfaces only. Private QA shim may be named as a consumer and motivation, but private harness implementation stays out of public PRD/issues.
-- Public CLI mirror roadmap issue: #34. Completed slices: #35 CLI foundation/app-data isolation, #36 repository setup commands, #37 Env Draft commands, and #40 settings/bridge metadata. Current branch implements #38 installed repos/diagnostics and #39 Env Vault commands. Remaining implementation slice: #41 docs/private QA convention.
+- Public CLI mirror PRD should scope implementation to production-safe CLI/app surfaces only. Private QA may be named as a consumer and motivation, but private harness implementation stays out of public PRD/issues.
+- Public CLI mirror docs live in `docs/cli-mirror.md` and should describe command map, `--json`, structured errors, version metadata, app-data isolation, desktop-dialog scope, and private QA boundary without exposing private harness implementation.
+- Public CLI mirror roadmap issue: #34. Local code has implemented #35 CLI foundation/app-data isolation, #36 repository setup commands, #37 Env Draft commands, #38 installed repos/diagnostics, #39 Env Vault commands, #40 settings/bridge metadata, and local #41 docs/private QA convention artifacts. Verify GitHub issue state before marking #41 or #34 closed.
 - CLI mirror work should include public-interface integration tests for each command or command group, covering JSON shape, error shape, app-data isolation, and secret redaction without depending on private QA harness code.
 - CLI and Wails should be sibling shells over the same `AppService` and domain types. CLI command handlers should call `AppService` directly rather than calling Wails wrapper methods.
 - CLI command parsing and execution should move out of `cmd/instantrepo/main.go` into an internal CLI/command package so command behavior can be integration-tested without a giant `main`.
@@ -459,97 +425,23 @@ _Avoid_: auto setup, run step
 - CLI command names defined by the PRD should be treated as stable enough for agents and private QA. They may change while implementation issues are still open, but after release they need compatibility aliases or a CLI contract version bump.
 - When future Wails methods are added, maintainers should decide whether a safe CLI mirror should be added in the same feature slice; missing mirrors are coverage gaps to classify, not automatic product bugs.
 - Secret-capable CLI mirrors must follow product safety even when QA uses fake credentials: mask by default, require explicit reveal intent for raw values, avoid raw values in logs/reports, and avoid raw values in default JSON output unless the command is clearly a reveal command.
-- CLI should grow into explicit subcommands for mirrored app operations, such as `repo analyze`, `repo execute`, `env draft`, `env raw`, `vault list`, and settings commands, while preserving current flag-based analyze/execute behavior for compatibility.
-- CLI subcommands default to human-readable output for normal users and support `--json` for agents and private QA; private QA shim should call CLI with `--json`.
-- CLI `--json` output should match Wails method return shapes and domain JSON structs where possible, using only thin wrappers for command metadata or errors so private QA shims do not maintain custom response translations.
-- CLI `--json` failures should return a nonzero exit code and structured error JSON with a message, stable code when known, and optional details so private QA can map failures to frontend errors reliably.
+- CLI has explicit subcommands for mirrored app operations, such as `repo analyze`, `repo preflight`, `repo import`/`repo clone`, `repo execute`, `repo list`, `repo details`, `repo diagnostics`, `env draft`, `env raw`, `env vault`, `settings contribution`, `settings ai-env-review`, `shell info`, and `version`, while preserving current flag-based analyze/execute behavior for compatibility.
+- CLI subcommands default to human-readable output for normal users and support `--json` for agents and local automation.
+- CLI `--json` output should match Wails method return shapes and domain JSON structs where possible, using only thin wrappers for command metadata or errors so clients do not maintain custom response translations.
+- CLI `--json` failures should return a nonzero exit code and structured error JSON with a message, stable code when known, and optional details so automation can map failures reliably.
 - CLI exposes `version --json` metadata with app version, git commit when available, and CLI contract version. Breaking JSON contract changes should bump the CLI contract version so agents and private QA can detect drift.
-- Private QA shim should warn and require tester confirmation for newer unknown CLI contract versions, block older unsupported versions, and record version mismatches in the QA report.
-- Frontend bridge contract should expose a bridge contract version through `ShellInfo()` or equivalent. Wails and the private QA shim should return the same bridge contract version so frontend/private QA can detect method or shape drift.
-- Frontend bridge contract mismatch should show a clear desktop-controls unavailable or outdated state instead of crashing; official QA scenarios should block and report the mismatch while still allowing visual inspection when useful.
-- Private QA should inject its Wails-style `window.go.main.App` shim at runtime from `.qa-local` without persistently editing public frontend files. If the frontend needs a cleaner bridge injection seam later, it should be a production-safe architecture hook, not QA-specific code.
-- Private QA shim must be available before the React app initializes. Prefer a browser init script when reliable; otherwise use a private `.qa-local` HTML wrapper that loads the shim before the real frontend bundle. Do not edit public `index.html` just for QA.
-- Official private QA should build the public frontend once, serve the built frontend files read-only through the private harness, and avoid watch/hot-reload during pass/fail runs.
-- CLI should support an explicit app data directory option, such as `--app-data-dir` or `INSTANTREPO_APP_DATA_DIR`, so private QA can store SQLite metadata, setup logs, and related app state in a temporary isolated folder instead of the user's normal Local App Database.
-- Default CLI app data behavior remains normal user app data; private QA must pass a temporary app data directory for official runs.
+- No-ship guardrails for release: `.qa-local/` must remain ignored, private QA files must not be included in Wails or frontend artifacts, public code must not expose QA-only bridges or overlays, and `TestPrivateQALocalWorkspaceRemainsIgnored` should stay green.
+- CLI should support an explicit app data directory option, such as `--app-data-dir` or `INSTANTREPO_APP_DATA_DIR`, so dev, smoke, and automation work can isolate SQLite metadata, setup logs, and related app state from the user's normal Local App Database.
+- Default CLI app data behavior remains normal user app data; local automation should pass a temporary app data directory.
 - App data directory override must resolve to an absolute path, create the directory if missing, and reject dangerous targets such as drive root, home dir, repo root, target repo, or a path inside the target repo being analyzed.
+- Metadata-only CLI commands such as `version` and `shell info` validate app data overrides without creating Local App Database directories.
 - Invalid CLI or Wails app data overrides must fail closed with a visible error instead of silently falling back to normal app metadata or a nil Local App Database.
-- CLI vault/settings commands use the same app data directory and operating system credential store behavior as the app by default. Public CLI should not add a fake or in-memory credential backend just for QA; private QA handles fake credentials in its own harness unless a future product-safe credential backend override is explicitly designed.
+- CLI vault/settings commands use the same app data directory and operating system credential store behavior as the app by default. Public CLI should not add a fake or in-memory credential backend just for QA unless a future product-safe credential backend override is explicitly designed.
 - CLI vault commands must preserve credential-key app-data namespacing when `--app-data-dir` or `INSTANTREPO_APP_DATA_DIR` is used; temp app data can share the same OS credential store but not the same credential target keys.
-- Wails dev/QA launches may use `INSTANTREPO_APP_DATA_DIR` to isolate desktop app metadata for smoke checks, while normal double-clicked `InstantRepo.exe` uses default OS app data unless an advanced user deliberately sets the environment variable.
+- Wails dev launches may use `INSTANTREPO_APP_DATA_DIR` to isolate desktop app metadata for smoke checks, while normal double-clicked `InstantRepo.exe` uses default OS app data unless an advanced user deliberately sets the environment variable.
 - App data directory override is a launch-context control, not a normal in-app setting.
-- The agent is the tester and supervisor for a **Chrome-Supervised QA Session**: it makes the final pass/fail judgment from UI behavior, evidence, and scenario brief.
-- The Chrome QA surface should keep the real InstantRepo UI visually close to the shipped app so maintainers can monitor real layout and interaction quality; QA controls should be lightweight surrounding context, not a replacement control panel.
-- The Chrome QA surface should reuse the Wails frontend React components and app flows where possible, swapping only the backend adapter and adding minimal QA overlay/context.
-- Normal UI screenshots in QA should hide or minimize the QA overlay so visual evidence reflects the shipped app surface; failure screenshots may include the overlay/log drawer when context helps explain the issue.
-- QA runner should serve a production-like built frontend by default to stay close to shipped behavior, with dev-mode only for debugging.
-- QA-specific frontend shim/overlay and runner artifacts must stay in `.qa-local` or private QA repo and outside normal user release assets so they are not accidentally shipped.
-- Official QA verdicts should pin one app build for the whole session. Watch/hot-reload mode is allowed for exploratory debugging, but not for pass/fail reports.
-- If InstantRepo source or built app content changes during an official QA session, the session is invalidated or marked exploratory, and the scenario should be rerun from a fresh pinned build.
-- QA reports record app commit, branch, dirty status, and start/end source fingerprints so mixed-version evidence is visible.
-- QA reports distinguish app source fingerprint from private QA harness fingerprint; ignored `.qa-local` files do not affect app validity but should be fingerprinted separately for QA reproducibility.
-- QA reports include relevant untracked public-repo files in the app source fingerprint, ignore known generated/build outputs, exclude `.qa-local` into the QA harness fingerprint, and list uncertain untracked files for tester judgment.
-- Official private QA should build the InstantRepo CLI binary once into the run folder and have the private shim call that pinned binary; `go run` is allowed for exploratory debugging but not official pass/fail verdicts.
-- Official private QA sessions should build all pinned artifacts before running verdict scenarios: CLI binary, production frontend bundle, and Wails app build. Chrome-supervised QA uses the built frontend plus pinned CLI, then Wails Smoke Check validates the built desktop app.
-- If any pinned build artifact fails during official private QA, the session blocks and retries once after recording the failure. If it still fails, the agent writes a handoff with build logs, environment, commit/dirty state, and next steps so another agent/tester can continue; no official scenario verdict is produced from an invalid build.
-- Build failures during QA do not automatically create GitHub issues. The agent writes a report or handoff first, and the tester decides whether to create a credential-free issue summary.
-- Blocked-QA handoffs live in the run evidence folder by default so build logs, screenshots, reports, and continuation notes stay together; the agent may copy a handoff elsewhere only when the tester asks.
-- No-ship guardrails for QA: `.qa-local` is gitignored, `wails build` must not build or package private QA artifacts, release checks should reject private QA files in user artifacts, and normal frontend bundles should not include QA overlay routes.
-- Normal `InstantRepo.exe` must not compile or expose a **Private QA Shim** or QA bridge runtime path; private/local QA must use real UI flow and production-safe CLI/API surfaces.
-- **QA Mode Browser Harness** targets local source builds first; installed `InstantRepo.exe` testing is limited to **Wails Smoke Check** unless a future design adds a safe installed-app harness.
-- **QA Mode Browser Harness** uses an isolated fake or in-memory credential backend by default and does not touch the user's real operating system credential store.
-- Real OS credential-store QA requires an explicit separate scenario, fake/disposable values, cleanup evidence, and a run report entry naming the credential backend used.
-- **QA Scenario Slice** files must not contain raw secrets, but a supervised QA run may accept user-provided real secrets at run time when scenario policy explicitly allows real secrets.
-- Real secrets may be supplied by prompt, vault alias, or environment variable when scenario policy allows real secrets; if none is provided, the runner uses fake or disposable credentials.
-- Real secrets used during QA must never be written to scenario YAML, run reports, logs, screenshots when avoidable, SQLite, or evidence bundles; reports may record only masked fingerprints, whether a real credential was supplied, and its source class such as `env-var`, `prompt`, `vault-alias`, or `fake`.
-- Private QA should rely on InstantRepo to generate Env Draft defaults and local values whenever those values are under test. Scenario-provided fake credentials are used only when the flow requires user-supplied service credential input.
-- Private QA should not fill credential blanks unless InstantRepo marks the credential as required human input for the scenario. Any fake credential entry is tester input and must be logged separately from app-generated values.
-- When a scenario covers manual Env Draft input, private QA should type through the frontend UI and save through InstantRepo actions rather than editing draft JSON or env files behind the UI.
-- Env Draft QA should capture the frontend draft state before Save All, then inspect saved `.env` files after Save All and compare expected variables, masked placeholders, tester-entered values, and app-generated values to catch frontend-backend mismatch.
-- Env evidence should preserve enough structure and values to judge correctness: raw values are allowed for safe local/dev config such as localhost URLs, local ports, local datastore URIs, booleans, and non-secret names; secret-like or credential values are masked with short fingerprints, and uncertain values are masked.
-- Generated local secrets such as `JWT_SECRET` are still treated as secrets in QA evidence: verify non-empty/random-like/stability properties as needed, but store only masked fingerprints instead of raw values.
-- Private QA may read raw secret-like values locally only to compute fingerprints or verify properties, but it must redact before storing, logging, sending to chat/model, or creating issue text.
-- Env evidence should include expected versus actual per variable, value source class, target file, and pass/fail reasoning so testers can see what InstantRepo generated, what it left blank, and what required tester input.
-- Any artifact generated by InstantRepo that may leave the local machine, including issue text, diagnostics, exports, reports, logs, screenshots, and docs, must be credential-free by construction.
-- When a **Chrome-Supervised QA Session** fails or looks wrong, the agent must investigate during that scenario enough to explain likely cause, reproduction steps, expected versus actual behavior, relevant logs/evidence, and likely product area before handing work to TDD.
-- A failed **QA Scenario Slice** should produce a TDD-ready failure note, but the QA runner itself does not switch into development or code fixing unless the maintainer asks for that flow.
-- A **Chrome-Supervised QA Session** should produce a thorough report first and should group related failures by likely product cause; one failing check does not automatically become one GitHub issue.
-- After finding a bug, agents may continue QA only when state remains trustworthy and later evidence will still be meaningful; they should stop or isolate the scenario when the bug corrupts state, blocks required flow, or could make later evidence misleading.
-- Independent scenarios may continue from fresh isolated state after a bug, and the report must explain the continuation or stop decision.
-- GitHub issues from QA are created only after maintainer direction or an explicit issue-creation QA flow, using the grouped report and TDD-ready notes as source material.
-- Each **Chrome-Supervised QA Session** writes a detailed, session-specific run report in its evidence folder, not a shared report that gets overwritten.
-- QA run report filenames should include the run id and timestamp, such as `qa-report-<run-id>-<timestamp>.md`, and summarize every scenario run in that session.
-- QA run reports include a tester-decision section listing likely issue candidates, unclear findings, scenario gaps, and suggested next QA slices; issues are created only after tester direction.
-- **QA Evidence Bundle** includes automatic start/end/error screenshots for each scenario, plus agent-added screenshots for surprising UI states.
-- **QA Evidence Bundle** should capture enough reproduction material for failures: scenario id, exact steps taken, observed screen, frontend console errors, backend/action logs, redacted env/file diffs, and run folder paths.
-- Failure evidence must be value-safe: no raw secrets, no full source dumps by default, and no sensitive credential values in screenshots or logs.
-- Private QA may capture raw command stdout/stderr locally only after or alongside a redaction pipeline; reports and chat should include redacted excerpts or summaries, and uncertain logs should remain local by path rather than pasted.
-- If **QA Mode Browser Harness** fails before any file or repo state changes, the runner may retry once to rule out transient launch or bridge failure.
-- If the app crashes, the bridge dies, or the session cannot continue after state changes, the runner stops the affected session, logs the crash, saves evidence, and marks remaining scenario work blocked instead of retrying blindly.
-- **QA Mode Browser Harness** uses scenario-level network policy so each run can allow only the network kinds it needs, such as repo clone, dependency install, or provider API validation.
-- GitHub repo clone is allowed by default only for the target repo named by the **QA Scenario Slice**.
-- Dependency install network is allowed only when the scenario allowlist enables the matching setup action, and the report must record that dependency network was used.
-- Before dependency install, the agent should inspect package manager files, install scripts, repo context, and scenario intent enough to judge whether install is acceptable for supervised QA.
-- Dependency install scripts may run only in isolated QA workspaces after scenario allowlist and agent safety review; the run report must state that install scripts may have run.
-- Before running target repo setup commands through InstantRepo during QA, the agent should inspect package scripts, safety findings, and scenario intent. Suspicious scripts should block the scenario and be reported instead of executed.
-- During QA, InstantRepo's own safety scan is product behavior under test, while the agent's separate safety review is a tester guardrail before command execution. If they disagree, the report should call out the mismatch.
-- If InstantRepo marks a setup command safe but the agent safety review finds it suspicious, the agent/tester guardrail wins: execution is blocked and the mismatch is reported as a likely product issue candidate.
-- If InstantRepo marks a setup command risky but the scenario allows it and the agent/tester review accepts the risk, QA may approve the action to test the approval flow; the report records the approval reason.
-- Provider API calls are blocked or faked by default; real provider validation requires an explicit scenario policy and should use fake or disposable credentials unless the maintainer directs otherwise.
-- Network evidence should include a best-effort summary of network-bearing actions, command logs, package-manager logs, and known host groups used, but the first harness must not claim full outbound network isolation without a real sandbox or firewall layer.
-- The QA runner enforces guardrails, launches the local surface, records evidence, and preserves inspectable run state; it is not the sole oracle for product correctness.
-- **QA Mode Browser Harness** uses isolated app state for each run by default and does not reuse the user's normal **Local App Database** or **User Env Vault** metadata.
-- **QA Mode Browser Harness** uses the same SQLite schema and migrations as the real app, but writes to an isolated per-run database file.
-- **QA Mode Browser Harness** clones the target repo into a fresh isolated workspace by default for each run; repo clone caching can be considered later but must not hide first-run setup behavior.
-- **QA Mode Browser Harness** prunes isolated run folders automatically: passed runs are short-lived, failed runs may be kept up to seven days, and a hard size cap deletes oldest runs first.
-- **QA Mode Browser Harness** is started through a CLI runner for agent use, not through normal app UI.
-- **QA Evidence Bundle** must avoid raw secrets and full repo/source/env dumps; it should record enough value-safe evidence for a maintainer to reproduce or create issues.
-- **QA Evidence Bundle** should live under the operating system temp area by default and be automatically pruned, keeping only recent runs so QA does not clog the user's machine.
-- **QA Evidence Bundle** records changed file paths and redacted summaries, while the tested clone remains available for manual inspection unless the user chose a disposable run.
-- Private QA cleanup covers evidence, temp app data, setup logs, and temp repo clones. Passed runs may be pruned quickly or kept only as newest few; failed runs may be retained up to seven days for inspection.
-- QA reports must show retained run paths and cleanup status so the maintainer can inspect files manually before cleanup removes them.
-- Private QA may prepare target repos before a scenario and inspect files after app actions, but product outcome changes should be made through InstantRepo UI/CLI actions. Direct harness edits to files that InstantRepo is supposed to produce invalidate that check unless the report marks them as prep or manual-command fallback.
-- Target repo setup commands under test, such as `bun install`, should run through InstantRepo `ExecuteStep`/CLI execute behavior. Direct harness commands are allowed only for prep or diagnosis after failure and must be labeled separately from app-run commands in the report.
+- Any artifact generated by InstantRepo that may leave the local machine, including issue text, diagnostics, exports, logs, screenshots, and docs, must be credential-free by construction.
+- QA reports and evidence remain local/private unless the tester asks for a credential-free public summary.
 - When a user manually enters a **Service Credential** in an **Env Draft**, InstantRepo may offer to save it to **User Env Vault** after explicit consent.
 - The offer to save manually entered **Service Credentials** to **User Env Vault** appears after the repo `.env` save succeeds.
 - Manual **Service Credential** vault prompts support "Not now" and "Never ask for this var" choices.

@@ -1537,6 +1537,39 @@ func TestAppDataDirFlagOverridesEnvironmentAndCreatesDirectory(t *testing.T) {
 	}
 }
 
+func TestMetadataCommandsDoNotCreateAppDataDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "version", args: []string{"version", "--json"}},
+		{name: "shell info", args: []string{"shell", "info", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			appDataDir := filepath.Join(t.TempDir(), "metadata-app-data")
+			args := append(append([]string{}, tc.args...), "--app-data-dir", appDataDir)
+
+			exitCode := Run(context.Background(), Options{
+				Args:    args,
+				Stdout:  &bytes.Buffer{},
+				Stderr:  &bytes.Buffer{},
+				Version: defaultTestVersion(),
+				NewApp: func(AppConfig) (App, func() error, error) {
+					t.Fatal("metadata command must not create app service")
+					return nil, nil, nil
+				},
+			})
+
+			if exitCode != 0 {
+				t.Fatalf("exit code = %d", exitCode)
+			}
+			if _, err := os.Stat(appDataDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("metadata command should not create app data dir, stat err = %v", err)
+			}
+		})
+	}
+}
+
 func TestAppDataDirUsesEnvironmentWhenFlagMissing(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "env-app-data")
 	repoPath := t.TempDir()

@@ -37,7 +37,7 @@ Private QA should:
 - use temp app data and fresh target repo clones
 - write local reports/evidence only, then let the tester decide whether to create credential-free public issues
 
-Public work that supports this lives in the CLI mirror roadmap: #34 and child issues #35-#41.
+Public work that supports this lives in the CLI mirror surface: repo analyze/preflight/import/execute, Env Draft generate/save/raw save, installed repo history, diagnostics, Env Vault, settings, `shell info`, and `version`.
 
 ## Safety Rules
 
@@ -158,6 +158,15 @@ For each repo:
 13. Run `recommended` steps if needed.
 14. Run `optional` steps only when relevant.
 15. Record result and defects.
+
+For CLI mirror parity, repeat key flow checks through:
+
+```bash
+go run ./cmd/instantrepo repo analyze --path C:\path\to\repo --json
+go run ./cmd/instantrepo repo preflight --repo https://github.com/user/repo --destination C:\work --json
+go run ./cmd/instantrepo env draft generate --path C:\path\to\repo --json
+go run ./cmd/instantrepo repo diagnostics --path C:\path\to\repo --json
+```
 
 ## Validation Checklist
 

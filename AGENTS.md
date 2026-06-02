@@ -10,6 +10,7 @@ InstantRepo be Go + Wails app. It helps user set up local repos.
 - CLI/API entry: `cmd/instantrepo`.
 - Desktop app: Wails in `cmd/instantrepo-wails`.
 - Frontend: React + Vite + TypeScript in `cmd/instantrepo-wails/frontend`.
+- CLI mirror: parser and app-data policy in `internal/command`.
 - Local metadata store: SQLite in `internal/store`.
 - Tests: Go tests beside code, plus manual plan in `test/TEST_PLAN.md`.
 
@@ -61,9 +62,9 @@ Architecture cleanup is also complete:
 - `#26` Deepen setup safety scan with ignored generated folders. Closed.
 - `#27` Deepen Env Draft foundation interfaces for target inference and save policy. Closed.
 
-### Active CLI Mirror Track
+### CLI Mirror Track
 
-Public CLI mirroring is current ready-for-agent work. It is product work, not QA-only work. Private QA is only one consumer.
+Public CLI mirroring is product work, not QA-only work. Private QA is only one consumer.
 
 Parent PRD:
 
@@ -74,13 +75,16 @@ Completed foundation:
 - `#35` Add CLI mirror foundation, JSON contract, and app-data isolation. Closed.
 - `#36` Mirror repository analyze, import, preflight, and execute in CLI. Closed.
 - `#37` Mirror Env Draft generate and save flows in CLI. Closed.
+- `#38` Mirror installed repo history and diagnostics in CLI. Closed.
+- `#39` Mirror Env Vault operations in secret-safe CLI. Closed.
 - `#40` Mirror settings and bridge contract metadata in CLI. Closed.
 
-Implementation state:
+Current local state:
 
-1. `#38` Mirror installed repo history and diagnostics in CLI. Implemented in current branch, needs review.
-2. `#39` Mirror Env Vault operations in secret-safe CLI. Implemented in current branch, needs review.
-3. `#41` Document CLI mirror and private QA convention. Next after review.
+1. `docs/cli-mirror.md` exists locally with command map, JSON contract, app-data isolation, and private QA boundary.
+2. `.qa-local/README.md` exists locally with private harness runbook.
+3. App-data policy is split into `internal/command/app_data.go`; metadata commands validate app data paths without creating Local App Database dirs.
+4. Verify GitHub issue state before saying `#41` or parent `#34` is closed.
 
 Do not implement private QA harness code in public issues. Public work must stay production-safe.
 
@@ -92,7 +96,9 @@ Do not implement private QA harness code in public issues. Public work must stay
 - Use `.qa-local/` only when the tester asks for QA work.
 - Public GitHub issues must not include secrets or private harness implementation details.
 - Public app must not gain QA-only backdoors, hidden debug bridges, raw shell endpoints, or approval bypasses.
+- Release/user artifacts must not include `.qa-local/`, QA overlays, private reports, screenshots, evidence, or private shim code.
 - Local private QA issues live in `.qa-local/issues`.
+- Current private harness is implemented under `.qa-local/harness` with run state, scenario packs, pinned builds, shim, safety policy, reports, cleanup, and Wails smoke tests.
 
 Current important Env modules:
 
@@ -101,6 +107,7 @@ Current important Env modules:
 - `internal/service/envvault.go` owns User Env Vault backend behavior.
 - `internal/service/credential_store_windows.go` owns Windows credential-store access.
 - `internal/store/sqlite.go` stores Local App Database metadata, never raw vault values.
+- `internal/command/app_data.go` owns CLI app-data validation/preparation policy.
 - `cmd/instantrepo-wails/frontend/src/EnvDraftPanel.tsx` owns current structured Env Draft UI.
 
 ## Package Manager
@@ -233,6 +240,12 @@ Show CLI contract metadata:
 go run ./cmd/instantrepo version --json
 ```
 
+Read public CLI mirror docs:
+
+```bash
+Get-Content docs\cli-mirror.md
+```
+
 Run API:
 
 ```bash
@@ -279,6 +292,25 @@ Run one test:
 
 ```bash
 go test ./internal/service -run TestName
+```
+
+Check `.qa-local/` stays ignored:
+
+```bash
+go test ./internal/command -run TestPrivateQALocalWorkspaceRemainsIgnored
+git check-ignore .qa-local/
+```
+
+Run private QA harness tests only when tester asks for QA or private harness work:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-scenario-pack-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-build-state-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-evidence-report-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-safety-policy-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-shim-tests.ps1
+powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-wails-smoke-tests.ps1
 ```
 
 Before done, run `go test ./...` when Go code changed. Run `bun run build` when frontend code changed.

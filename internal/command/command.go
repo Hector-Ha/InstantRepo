@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -289,7 +288,7 @@ func runSettingsContributionGet(ctx context.Context, opts Options, global global
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -320,7 +319,7 @@ func runSettingsContributionSave(ctx context.Context, opts Options, global globa
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	raw, err := readCommandInput(opts, *inputPath, *readStdin, "contribution settings input")
@@ -358,7 +357,7 @@ func runSettingsContributionConsent(ctx context.Context, opts Options, global gl
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*publicEnabled) == "" {
@@ -394,7 +393,7 @@ func runSettingsContributionClearQueue(ctx context.Context, opts Options, global
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -440,7 +439,7 @@ func runSettingsAIEnvReviewGet(ctx context.Context, opts Options, global globalF
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -471,7 +470,7 @@ func runSettingsAIEnvReviewSave(ctx context.Context, opts Options, global global
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	raw, err := readCommandInput(opts, *inputPath, *readStdin, "AI Env Review settings input")
@@ -594,7 +593,7 @@ func runEnvDraftGenerate(ctx context.Context, opts Options, global globalFlags, 
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*localPath) == "" {
@@ -629,7 +628,7 @@ func runEnvDraftSave(ctx context.Context, opts Options, global globalFlags, args
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*localPath) == "" {
@@ -672,7 +671,7 @@ func runEnvRawSave(ctx context.Context, opts Options, global globalFlags, args [
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*localPath) == "" {
@@ -739,7 +738,7 @@ func runEnvVaultList(ctx context.Context, opts Options, global globalFlags, args
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -773,7 +772,7 @@ func runEnvVaultSave(ctx context.Context, opts Options, global globalFlags, args
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*variableName) == "" {
@@ -818,7 +817,7 @@ func runEnvVaultUpdate(ctx context.Context, opts Options, global globalFlags, ar
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -868,7 +867,7 @@ func runEnvVaultRemove(ctx context.Context, opts Options, global globalFlags, ar
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -905,7 +904,7 @@ func runEnvVaultApprove(ctx context.Context, opts Options, global globalFlags, a
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *repoPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *repoPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -948,7 +947,7 @@ func runEnvVaultRevoke(ctx context.Context, opts Options, global globalFlags, ar
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	approvalID, err := requiredPositiveInt64(*idRaw, "--approval-id", "missing_approval_id")
@@ -983,7 +982,7 @@ func runEnvVaultStatus(ctx context.Context, opts Options, global globalFlags, ar
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -1022,7 +1021,7 @@ func runEnvVaultSuppress(ctx context.Context, opts Options, global globalFlags, 
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *repoPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *repoPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*repoPath) == "" || strings.TrimSpace(*target) == "" || strings.TrimSpace(*variableName) == "" {
@@ -1061,7 +1060,7 @@ func runEnvVaultReveal(ctx context.Context, opts Options, global globalFlags, ar
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	entryID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -1126,7 +1125,7 @@ func runRepoAnalyze(ctx context.Context, opts Options, global globalFlags, args 
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*repoURL) == "" && strings.TrimSpace(*localPath) == "" {
@@ -1173,7 +1172,7 @@ func runRepoPreflight(ctx context.Context, opts Options, global globalFlags, arg
 	if err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("resolve clone target: %v", err)}, *jsonOut)
 	}
-	if err := validateAppDataDir(global.AppDataDir, targetPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, targetPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -1217,7 +1216,7 @@ func runRepoImport(ctx context.Context, opts Options, global globalFlags, args [
 	if err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("resolve clone target: %v", err)}, *jsonOut)
 	}
-	if err := validateAppDataDir(global.AppDataDir, targetPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, targetPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -1250,7 +1249,7 @@ func runRepoExecute(ctx context.Context, opts Options, global globalFlags, args 
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	if strings.TrimSpace(*stepID) == "" {
@@ -1290,7 +1289,7 @@ func runRepoList(ctx context.Context, opts Options, global globalFlags, args []s
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	app, cleanup, err := opts.NewApp(AppConfig{AppDataDir: cleanAppDataDir(global.AppDataDir)})
@@ -1320,7 +1319,7 @@ func runRepoDetails(ctx context.Context, opts Options, global globalFlags, args 
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, *jsonOut)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, ""); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, ""); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	installedRepoID, err := requiredPositiveInt64(*idRaw, "--id", "missing_id")
@@ -1363,7 +1362,7 @@ func runRepoDiagnostics(ctx context.Context, opts Options, global globalFlags, a
 	if idSet && pathSet {
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: "use either --id or --path, not both"}, *jsonOut)
 	}
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, *jsonOut)
 	}
 	req := domain.RepoDiagnosticExportRequest{LocalPath: *localPath}
@@ -1427,7 +1426,7 @@ func runLegacy(ctx context.Context, opts Options, global globalFlags, args []str
 		return writeCommandError(opts, commandError{Code: "invalid_arguments", Message: err.Error()}, global.JSON)
 	}
 	global.AppDataDir = strings.TrimSpace(*appDataDir)
-	if err := validateAppDataDir(global.AppDataDir, *localPath); err != nil {
+	if err := prepareAppDataDir(global.AppDataDir, *localPath); err != nil {
 		return writeCommandError(opts, commandError{Code: "invalid_app_data_dir", Message: err.Error()}, global.JSON)
 	}
 
@@ -1593,101 +1592,6 @@ func requiredPositiveInt64(raw, flagName, missingCode string) (int64, error) {
 		return 0, commandError{Code: "invalid_arguments", Message: fmt.Sprintf("%s must be a positive integer", flagName)}
 	}
 	return value, nil
-}
-
-func validateAppDataDir(appDataDir, targetRepoPath string) error {
-	appDataDir = strings.TrimSpace(appDataDir)
-	if appDataDir == "" {
-		return nil
-	}
-	if !filepath.IsAbs(appDataDir) {
-		return fmt.Errorf("app data dir must be absolute")
-	}
-	cleanAppData, err := filepath.Abs(appDataDir)
-	if err != nil {
-		return fmt.Errorf("resolve app data dir: %w", err)
-	}
-	cleanAppData = filepath.Clean(cleanAppData)
-	if filepath.Dir(cleanAppData) == cleanAppData {
-		return fmt.Errorf("app data dir must not be filesystem root")
-	}
-	if volume := filepath.VolumeName(cleanAppData); volume != "" && strings.EqualFold(cleanAppData, volume+string(os.PathSeparator)) {
-		return fmt.Errorf("app data dir must not be drive root")
-	}
-	homeDir, err := os.UserHomeDir()
-	if err == nil && samePath(cleanAppData, homeDir) {
-		return fmt.Errorf("app data dir must not be home dir")
-	}
-	repoRoot, err := currentSourceRepoRoot()
-	if err == nil && samePath(cleanAppData, repoRoot) {
-		return fmt.Errorf("app data dir must not be repo root")
-	}
-	if strings.TrimSpace(targetRepoPath) != "" {
-		repoAbs, err := filepath.Abs(targetRepoPath)
-		if err != nil {
-			return fmt.Errorf("resolve target repo path: %w", err)
-		}
-		repoAbs = filepath.Clean(repoAbs)
-		if samePath(cleanAppData, repoAbs) || isPathInside(cleanAppData, repoAbs) {
-			return fmt.Errorf("app data dir must not be target repo or inside target repo")
-		}
-	}
-	if _, err := store.DatabasePathForAppDataDir(cleanAppData); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(cleanAppData, 0o700); err != nil {
-		return fmt.Errorf("create app data dir: %w", err)
-	}
-	return nil
-}
-
-func cleanAppDataDir(appDataDir string) string {
-	if strings.TrimSpace(appDataDir) == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(appDataDir)
-	if err != nil {
-		return filepath.Clean(appDataDir)
-	}
-	return filepath.Clean(abs)
-}
-
-func currentSourceRepoRoot() (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Clean(wd)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", os.ErrNotExist
-		}
-		dir = parent
-	}
-}
-
-func samePath(a, b string) bool {
-	aa, errA := filepath.Abs(a)
-	bb, errB := filepath.Abs(b)
-	if errA == nil {
-		a = aa
-	}
-	if errB == nil {
-		b = bb
-	}
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-}
-
-func isPathInside(path, parent string) bool {
-	rel, err := filepath.Rel(parent, path)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 type commandError struct {

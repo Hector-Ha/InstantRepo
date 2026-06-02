@@ -16,7 +16,7 @@ var (
 	envAssignmentPattern = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$`)
 
 	// Code scanner patterns
-	jsEnvPattern        = regexp.MustCompile(`process\.env\.([A-Za-z_][A-Za-z0-9_]*)`)
+	jsEnvPattern        = regexp.MustCompile(`(?:process|import\.meta)\.env\.([A-Za-z_][A-Za-z0-9_]*)`)
 	goEnvPattern        = regexp.MustCompile(`os\.Getenv\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)`)
 	pyEnvPattern        = regexp.MustCompile(`os\.(?:environ\.get|getenv)\(['"]([A-Za-z_][A-Za-z0-9_]*)['"]\)|os\.environ\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]`)
 	jsDotenvPathPattern = regexp.MustCompile(`(?:dotenv\.)?config\s*\(\s*\{[^}]*path\s*:\s*['"]([^'"]+)['"]`)

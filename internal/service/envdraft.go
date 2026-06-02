@@ -476,7 +476,7 @@ func applyCloudDatastoreSuggestion(item domain.EnvVarRequirement, value *domain.
 	}
 	lower := strings.ToLower(item.SuggestedValue)
 	name := strings.ToUpper(strings.TrimSpace(item.Name))
-	if strings.Contains(lower, "mongodb+srv://") || strings.Contains(lower, "atlas") || (name == "MONGODB_URI" && hasTopologyServiceSignal(item, "mongodb")) {
+	if strings.Contains(lower, "mongodb+srv://") || strings.Contains(lower, "atlas") || (isMongoDatabaseURLEnv(name) && hasTopologyServiceSignal(item, "mongodb") && !hasLocalMongoDBEvidence(item)) {
 		value.Value = ""
 		value.ValueClass = domain.EnvValueClassProviderConfig
 		value.Instructions = append(value.Instructions, "Cloud MongoDB hint detected. Leave blank unless you have the real Atlas connection string.")
@@ -500,6 +500,9 @@ func (m *EnvDraftManager) applyDevDefaultAllocation(repoPath, targetPath string,
 	targetDir := item.TargetDir
 	if targetDir == "" {
 		targetDir = filepath.Dir(targetPath)
+	}
+	if value.ValueClass == domain.EnvValueClassServiceCredential || value.ValueClass == domain.EnvValueClassProviderConfig {
+		return
 	}
 	if isBackendPortEnv(name) && hasTopologySignalForDir(item, "backend") {
 		port := m.assignedPortFromEvidence(repoPath, targetDir, "backend", 8080, item.SuggestedValue, value)
@@ -525,6 +528,16 @@ func (m *EnvDraftManager) applyDevDefaultAllocation(repoPath, targetPath string,
 		value.Provenance.Source = domain.EnvValueSourceAllocator
 		return
 	}
+	if isFrontendAppURLEnv(name) && hasTopologySignalForDir(item, "backend") {
+		if frontendDir, ok := frontendTargetDir(item); ok {
+			port := m.assignedPort(repoPath, frontendDir, "frontend", frontendPreferredPort(item, frontendDir), false)
+			value.Value = "http://localhost:" + strconv.Itoa(port)
+			value.ValueClass = domain.EnvValueClassDevDefault
+			value.Confidence = maxConfidence(value.Confidence, 0.82)
+			value.Provenance.Source = domain.EnvValueSourceAllocator
+			return
+		}
+	}
 	if isFrontendAPIURLEnv(name) {
 		if backendDir, ok := backendTargetDir(item); ok {
 			port := m.assignedPort(repoPath, backendDir, "backend", 8080, false)
@@ -537,6 +550,13 @@ func (m *EnvDraftManager) applyDevDefaultAllocation(repoPath, targetPath string,
 	}
 	if isDatabaseURLEnv(name) && hasTopologyServiceSignal(item, "postgres") {
 		value.Value = "postgres://postgres:postgres@localhost:5432/" + envDatabaseName(item.ProjectName, repoPath)
+		value.ValueClass = domain.EnvValueClassDevDefault
+		value.Confidence = maxConfidence(value.Confidence, 0.86)
+		value.Provenance.Source = domain.EnvValueSourceAllocator
+		return
+	}
+	if isMongoDatabaseURLEnv(name) && hasLocalMongoDBEvidence(item) {
+		value.Value = "mongodb://localhost:27017/" + envDatabaseName(item.ProjectName, repoPath)
 		value.ValueClass = domain.EnvValueClassDevDefault
 		value.Confidence = maxConfidence(value.Confidence, 0.86)
 		value.Provenance.Source = domain.EnvValueSourceAllocator
@@ -679,6 +699,15 @@ func isFrontendAPIURLEnv(name string) bool {
 	return strings.Contains(name, "API_URL") || strings.Contains(name, "BACKEND_URL") || strings.Contains(name, "SERVER_URL")
 }
 
+func isFrontendAppURLEnv(name string) bool {
+	switch name {
+	case "CLIENT_URL", "FRONTEND_URL", "WEB_URL":
+		return true
+	default:
+		return false
+	}
+}
+
 func isAppURLEnv(name string) bool {
 	switch name {
 	case "APP_URL", "APPLICATION_URL", "NEXT_PUBLIC_APP_URL", "VITE_APP_URL", "SITE_URL":
@@ -691,6 +720,15 @@ func isAppURLEnv(name string) bool {
 func isDatabaseURLEnv(name string) bool {
 	switch name {
 	case "DATABASE_URL", "POSTGRES_URL":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMongoDatabaseURLEnv(name string) bool {
+	switch name {
+	case "MONGODB_URI", "MONGO_URI", "MONGODB_URL", "MONGO_URL":
 		return true
 	default:
 		return false
@@ -722,6 +760,35 @@ func backendTargetDir(item domain.EnvVarRequirement) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func frontendTargetDir(item domain.EnvVarRequirement) (string, bool) {
+	for _, signal := range item.TopologySignals {
+		if signal.Kind == "frontend" && signal.TargetDir != "" && signal.TargetDir != item.TargetDir {
+			return signal.TargetDir, true
+		}
+	}
+	return "", false
+}
+
+func frontendPreferredPort(item domain.EnvVarRequirement, targetDir string) int {
+	for _, signal := range item.TopologySignals {
+		if signal.Kind == "port" && signal.TargetDir == targetDir && signal.Port > 0 {
+			return signal.Port
+		}
+	}
+	return 5173
+}
+
+func hasLocalMongoDBEvidence(item domain.EnvVarRequirement) bool {
+	if !hasTopologyServiceSignal(item, "mongodb") {
+		return false
+	}
+	if item.FillStrategy == "auto_fillable" {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(item.SuggestedValue))
+	return strings.HasPrefix(lower, "mongodb://localhost") || strings.HasPrefix(lower, "mongodb://127.0.0.1")
 }
 
 func topologyConfidenceForItem(item domain.EnvVarRequirement, kind string) float64 {

@@ -182,6 +182,40 @@ func TestBuildEnvDraftRepresentsTwoTargetFiles(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDraftInfersClientAndServerTargetsFromViteImportMetaUsage(t *testing.T) {
+	repoPath := t.TempDir()
+	clientDir := filepath.Join(repoPath, "client")
+	serverDir := filepath.Join(repoPath, "server")
+	writeServiceTestFile(t, filepath.Join(clientDir, "package.json"), `{
+  "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"}
+}`)
+	writeServiceTestFile(t, filepath.Join(clientDir, "src", "main.ts"), "const serverUrl = import.meta.env.VITE_SERVER_URL\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "package.json"), `{
+  "dependencies": {"express": "latest"},
+  "scripts": {"dev": "node index.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(serverDir, "index.js"), "const sessionSecret = process.env.SESSION_SECRET\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	clientTarget := envDraftTarget(t, draft, filepath.Join("client", ".env"))
+	serverTarget := envDraftTarget(t, draft, filepath.Join("server", ".env"))
+	if envDraftValue(t, clientTarget, "VITE_SERVER_URL").Name == "" {
+		t.Fatalf("expected VITE_SERVER_URL in client target")
+	}
+	if envDraftValue(t, serverTarget, "SESSION_SECRET").Name == "" {
+		t.Fatalf("expected SESSION_SECRET in server target")
+	}
+}
+
 func TestBuildEnvDraftRejectsEvidenceOnlyVarsWithoutWriteTarget(t *testing.T) {
 	repoPath := t.TempDir()
 
@@ -464,6 +498,76 @@ func TestBuildEnvDraftAllocatesFrontendBackendDefaultsFromTopology(t *testing.T)
 	}
 	if got := envDraftValue(t, webTarget, "VITE_API_URL").Value; got != "http://localhost:8080" {
 		t.Fatalf("expected frontend API URL to point at backend, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftFillsSafeClientServerDefaultsAndLeavesProviderKeysBlank(t *testing.T) {
+	repoPath := t.TempDir()
+	clientDir := filepath.Join(repoPath, "client")
+	serverDir := filepath.Join(repoPath, "server")
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"name":"client-server-app","private":true}`)
+	writeServiceTestFile(t, filepath.Join(clientDir, "package.json"), `{
+  "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"}
+}`)
+	writeServiceTestFile(t, filepath.Join(clientDir, "src", "main.ts"), "const serverUrl = import.meta.env.VITE_SERVER_URL\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "package.json"), `{
+  "dependencies": {"express": "latest", "@sendgrid/mail": "latest"},
+  "scripts": {"dev": "node index.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(serverDir, ".env.example"), "PORT=\nCLIENT_URL=\nMONGODB_URI=\nSENDGRID_API_KEY=\nGROQ_API_KEY=\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "index.js"), strings.Join([]string{
+		"const port = process.env.PORT",
+		"const clientURL = process.env.CLIENT_URL",
+		"const mongoURI = process.env.MONGODB_URI",
+		"const sendgridKey = process.env.SENDGRID_API_KEY",
+		"const groqKey = process.env.GROQ_API_KEY",
+	}, "\n"))
+	writeServiceTestFile(t, filepath.Join(repoPath, "docker-compose.yml"), "services:\n  mongodb:\n    image: mongo:7\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	clientTarget := envDraftTarget(t, draft, filepath.Join("client", ".env"))
+	serverTarget := envDraftTarget(t, draft, filepath.Join("server", ".env"))
+	viteServerURL := envDraftValue(t, clientTarget, "VITE_SERVER_URL")
+	if viteServerURL.Value != "http://localhost:8080" {
+		t.Fatalf("expected VITE_SERVER_URL to point at backend, got %q", viteServerURL.Value)
+	}
+	if viteServerURL.Provenance.Source != domain.EnvValueSourceAllocator || viteServerURL.ValueClass != domain.EnvValueClassDevDefault {
+		t.Fatalf("expected VITE_SERVER_URL allocator dev default, got %+v", viteServerURL)
+	}
+
+	clientURL := envDraftValue(t, serverTarget, "CLIENT_URL")
+	if clientURL.Value != "http://localhost:5173" {
+		t.Fatalf("expected CLIENT_URL to point at Vite client, got %q", clientURL.Value)
+	}
+	if clientURL.Provenance.Source != domain.EnvValueSourceAllocator || clientURL.ValueClass != domain.EnvValueClassDevDefault {
+		t.Fatalf("expected CLIENT_URL allocator dev default, got %+v", clientURL)
+	}
+
+	mongoURI := envDraftValue(t, serverTarget, "MONGODB_URI")
+	if mongoURI.Value != "mongodb://localhost:27017/client_server_app" {
+		t.Fatalf("expected local MongoDB URI, got %q", mongoURI.Value)
+	}
+	if mongoURI.Provenance.Source != domain.EnvValueSourceAllocator || mongoURI.ValueClass != domain.EnvValueClassDevDefault {
+		t.Fatalf("expected MONGODB_URI allocator dev default, got %+v", mongoURI)
+	}
+
+	for _, name := range []string{"SENDGRID_API_KEY", "GROQ_API_KEY"} {
+		value := envDraftValue(t, serverTarget, name)
+		if value.Value != "" {
+			t.Fatalf("expected provider credential %s to stay blank, got %q", name, value.Value)
+		}
+		if value.ValueClass != domain.EnvValueClassServiceCredential {
+			t.Fatalf("expected provider credential class for %s, got %+v", name, value)
+		}
 	}
 }
 
