@@ -26,6 +26,18 @@ export function bridgeContractOutdatedMessage(actual: string) {
   return `Desktop controls are unavailable because bridge contract ${actual} is outdated. Expected ${expectedBridgeContractVersion}. Update InstantRepo and reload the desktop window.`;
 }
 
+export function canUseLocalEnvDraftFallback(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return (
+    message === desktopSessionUnavailableMessage ||
+    message === missingBridgeContractMessage ||
+    message.startsWith("Desktop controls are unavailable because bridge contract ") ||
+    message ===
+      'Desktop action "GenerateEnvDraft" is unavailable in this desktop session.'
+  );
+}
+
 export interface DesktopAppBridge {
   AIEnvReviewSettings(): Promise<AIEnvReviewSettings>;
   AnalyzeRepository(repoURL: string, localPath: string): Promise<AnalyzeSnapshot>;

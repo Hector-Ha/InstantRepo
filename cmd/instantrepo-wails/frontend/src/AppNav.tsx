@@ -1,8 +1,16 @@
-export type AppView = "setup" | "repos" | "vault" | "settings";
+export type AppView =
+  | "overview"
+  | "repos"
+  | "environment"
+  | "steps"
+  | "vault"
+  | "settings";
 
 const viewLabels: Record<AppView, string> = {
-  setup: "Setup",
-  repos: "Installed Repos",
+  overview: "Overview",
+  repos: "Repositories",
+  environment: "Environment",
+  steps: "Setup Steps",
   vault: "Env Vault",
   settings: "Settings",
 };
@@ -15,7 +23,7 @@ export function AppNav({
   onChange: (view: AppView) => void;
 }) {
   return (
-    <nav className="app-nav" aria-label="Main views">
+    <nav className="app-nav" aria-label="Product areas">
       {(Object.keys(viewLabels) as AppView[]).map((view) => (
         <button
           key={view}

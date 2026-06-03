@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
-import { getMissingRequiredTools, getSafetyAttention } from "./src/attention";
-import type { AnalyzeSnapshot } from "./src/types";
+import {
+  envRequirementKey,
+  envRequirementTargetLabel,
+  getMissingRequiredTools,
+  getSafetyAttention,
+  getUnresolvedEnv,
+} from "./src/attention";
+import type { AnalyzeSnapshot, EnvVarRequirement } from "./src/types";
 
 test("missing tool attention ignores unavailable tools not required by plan", () => {
   const snapshot = {
@@ -52,6 +58,25 @@ test("missing tool attention keeps required missing plan gaps", () => {
   ]);
 });
 
+test("missing tool attention keeps version mismatches", () => {
+  const snapshot = {
+    plan: {
+      gaps: [
+        {
+          tool: "node",
+          requiredVersion: ">=20",
+          installedVersion: "18.19.0",
+          status: "version_mismatch",
+        },
+      ],
+    },
+  } as AnalyzeSnapshot;
+
+  expect(getMissingRequiredTools(snapshot).map((gap) => gap.tool)).toEqual([
+    "node",
+  ]);
+});
+
 test("safety attention exposes setup script findings", () => {
   const snapshot = {
     plan: {
@@ -75,4 +100,55 @@ test("safety attention exposes setup script findings", () => {
       filePath: "C:\\Repos\\AltShift\\setup.sh",
     },
   ]);
+});
+
+test("env attention uses fill strategy for required values", () => {
+  const snapshot = {
+    plan: {
+      env: {
+        variables: [
+          {
+            name: "SHARED_SECRET",
+            currentStatus: "missing",
+            fillStrategy: "user_required",
+          },
+          {
+            name: "DATABASE_URL",
+            currentStatus: "missing",
+            fillStrategy: "auto_fillable",
+          },
+          {
+            name: "OPENAI_API_KEY",
+            currentStatus: "configured",
+            fillStrategy: "user_required",
+          },
+        ],
+      },
+    },
+  } as AnalyzeSnapshot;
+
+  expect(getUnresolvedEnv(snapshot).map((item) => item.name)).toEqual([
+    "SHARED_SECRET",
+  ]);
+});
+
+test("env requirement identity includes target dir", () => {
+  const repoPath = "C:\\Repos\\multi";
+  const apiVar: EnvVarRequirement = {
+    name: "SHARED_SECRET",
+    source: "code scan",
+    required: true,
+    secret: true,
+    currentStatus: "missing",
+    fillStrategy: "user_required",
+    targetDir: "C:\\Repos\\multi\\api",
+  };
+  const workerVar: EnvVarRequirement = {
+    ...apiVar,
+    targetDir: "C:\\Repos\\multi\\worker",
+  };
+
+  expect(envRequirementKey(apiVar)).not.toBe(envRequirementKey(workerVar));
+  expect(envRequirementTargetLabel(apiVar, repoPath)).toBe("api");
+  expect(envRequirementTargetLabel(workerVar, repoPath)).toBe("worker");
 });

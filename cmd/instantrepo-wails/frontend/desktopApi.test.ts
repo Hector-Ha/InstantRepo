@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   bridgeContractOutdatedMessage,
+  canUseLocalEnvDraftFallback,
   createDesktopApi,
   desktopSessionUnavailableMessage,
   expectedBridgeContractVersion,
@@ -116,4 +117,28 @@ test("desktop API reports outdated bridge contract metadata", async () => {
   await expect(api.ListInstalledRepos()).rejects.toThrow(
     bridgeContractOutdatedMessage("old"),
   );
+});
+
+test("env draft fallback is limited to missing bridge errors", () => {
+  expect(canUseLocalEnvDraftFallback(new Error(desktopSessionUnavailableMessage))).toBe(
+    true,
+  );
+  expect(canUseLocalEnvDraftFallback(new Error(missingBridgeContractMessage))).toBe(
+    true,
+  );
+  expect(
+    canUseLocalEnvDraftFallback(
+      new Error(bridgeContractOutdatedMessage("old")),
+    ),
+  ).toBe(true);
+  expect(
+    canUseLocalEnvDraftFallback(
+      new Error('Desktop action "GenerateEnvDraft" is unavailable in this desktop session.'),
+    ),
+  ).toBe(true);
+  expect(
+    canUseLocalEnvDraftFallback(
+      new Error("save env target api\\.env failed: write_failed"),
+    ),
+  ).toBe(false);
 });

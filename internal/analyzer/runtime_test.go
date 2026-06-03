@@ -3,6 +3,7 @@ package analyzer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"instantrepo/internal/domain"
@@ -199,6 +200,84 @@ func TestAnalyzeInfersComponentTargetsFromCodeUsage(t *testing.T) {
 	}
 }
 
+func TestAnalyzeIgnoresViteImportMetaBuiltIns(t *testing.T) {
+	repoPath := t.TempDir()
+
+	writeFile(t, filepath.Join(repoPath, "package.json"), `{"name":"vite-app","dependencies":{"vite":"latest"}}`)
+	writeFile(t, filepath.Join(repoPath, "src", "main.ts"), strings.Join([]string{
+		"console.log(import.meta.env.MODE)",
+		"console.log(import.meta.env.DEV)",
+		"console.log(import.meta.env.PROD)",
+		"console.log(import.meta.env.BASE_URL)",
+		"console.log(import.meta.env.SSR)",
+	}, "\n"))
+
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	if len(analysis.Env.Variables) != 0 {
+		t.Fatalf("expected Vite built-ins to be ignored, got %+v", analysis.Env.Variables)
+	}
+	if analysis.Env.TargetPath != "" {
+		t.Fatalf("expected no env target for Vite built-ins, got %q", analysis.Env.TargetPath)
+	}
+}
+
+func TestAnalyzeKeepsSameSourceEnvNameAcrossTargets(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	workerDir := filepath.Join(repoPath, "worker")
+
+	writeFile(t, filepath.Join(apiDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(apiDir, "index.js"), "const secret = process.env.SHARED_SECRET\n")
+	writeFile(t, filepath.Join(workerDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(workerDir, "index.js"), "const secret = process.env.SHARED_SECRET\n")
+
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	targetDirs := envVarTargetDirs(analysis.Env.Variables, "SHARED_SECRET")
+	if len(targetDirs) != 2 {
+		t.Fatalf("expected SHARED_SECRET in two targets, got %+v", analysis.Env.Variables)
+	}
+	if !containsString(targetDirs, apiDir) || !containsString(targetDirs, workerDir) {
+		t.Fatalf("expected SHARED_SECRET targets %q and %q, got %+v", apiDir, workerDir, targetDirs)
+	}
+}
+
+func TestAnalyzeKeepsExistingEnvStatusPerTarget(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	workerDir := filepath.Join(repoPath, "worker")
+
+	writeFile(t, filepath.Join(apiDir, ".env"), "SHARED_SECRET=api-local\n")
+	writeFile(t, filepath.Join(apiDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(apiDir, "index.js"), "const secret = process.env.SHARED_SECRET\n")
+	writeFile(t, filepath.Join(workerDir, "package.json"), `{"scripts":{"dev":"node index.js"}}`)
+	writeFile(t, filepath.Join(workerDir, "index.js"), "const secret = process.env.SHARED_SECRET\n")
+
+	analysis, err := NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	apiVar := envVarForTarget(t, analysis.Env.Variables, "SHARED_SECRET", apiDir)
+	if apiVar.CurrentStatus != "configured" {
+		t.Fatalf("expected api SHARED_SECRET configured, got %+v", apiVar)
+	}
+	workerVar := envVarForTarget(t, analysis.Env.Variables, "SHARED_SECRET", workerDir)
+	if workerVar.CurrentStatus != "missing" || workerVar.FillStrategy != "user_required" {
+		t.Fatalf("expected worker SHARED_SECRET missing and user_required, got %+v", workerVar)
+	}
+	if !hasStep(analysis.Steps, "review-env-values") {
+		t.Fatalf("expected review-env-values step for missing worker secret, got %+v", analysis.Steps)
+	}
+}
+
 func TestAnalyzeUsesSafeDotenvLoaderPathAsTarget(t *testing.T) {
 	repoPath := t.TempDir()
 	configDir := filepath.Join(repoPath, "config")
@@ -281,6 +360,36 @@ func envVarTargetDir(vars []domain.EnvVarRequirement, name string) string {
 		}
 	}
 	return ""
+}
+
+func envVarTargetDirs(vars []domain.EnvVarRequirement, name string) []string {
+	var targetDirs []string
+	for _, envVar := range vars {
+		if envVar.Name == name {
+			targetDirs = append(targetDirs, envVar.TargetDir)
+		}
+	}
+	return targetDirs
+}
+
+func containsString(items []string, expected string) bool {
+	for _, item := range items {
+		if item == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func envVarForTarget(t *testing.T, vars []domain.EnvVarRequirement, name, targetDir string) domain.EnvVarRequirement {
+	t.Helper()
+	for _, envVar := range vars {
+		if envVar.Name == name && envVar.TargetDir == targetDir {
+			return envVar
+		}
+	}
+	t.Fatalf("expected %s target %s in %+v", name, targetDir, vars)
+	return domain.EnvVarRequirement{}
 }
 
 func topologySignal(t *testing.T, topology domain.AppTopology, kind, targetDir string) domain.AppTopologySignal {

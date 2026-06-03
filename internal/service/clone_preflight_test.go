@@ -142,6 +142,9 @@ func TestClonePreflightAllowsCreatableDestination(t *testing.T) {
 func TestClonePreflightDetectsDuplicateNormalizedURL(t *testing.T) {
 	destination := t.TempDir()
 	existingPath := filepath.Join(t.TempDir(), "InstantRepo")
+	if err := os.MkdirAll(existingPath, 0o755); err != nil {
+		t.Fatalf("create existing repo path: %v", err)
+	}
 	store := &preflightInstalledRepoStore{
 		byNormalizedURL: map[string]domain.InstalledRepo{
 			"https://github.com/example/instantrepo": {
@@ -215,6 +218,9 @@ func TestClonePreflightDetectsNonEmptyTargetPathConflict(t *testing.T) {
 func TestClonePreflightDetectsSavedTargetPathConflict(t *testing.T) {
 	destination := t.TempDir()
 	targetPath := filepath.Join(destination, "InstantRepo")
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		t.Fatalf("create tracked target path: %v", err)
+	}
 	store := &preflightInstalledRepoStore{
 		byLocalPath: map[string]domain.InstalledRepo{
 			targetPath: {
@@ -248,6 +254,52 @@ func TestClonePreflightDetectsSavedTargetPathConflict(t *testing.T) {
 	}
 	if resp.RecommendedAction != domain.CloneActionChooseDifferentFolder {
 		t.Fatalf("expected action %q, got %q", domain.CloneActionChooseDifferentFolder, resp.RecommendedAction)
+	}
+}
+
+func TestClonePreflightIgnoresSavedReposWhenLocalPathIsMissing(t *testing.T) {
+	destination := t.TempDir()
+	targetPath := filepath.Join(destination, "InstantRepo")
+	missingDuplicatePath := filepath.Join(t.TempDir(), "missing-existing")
+	store := &preflightInstalledRepoStore{
+		byNormalizedURL: map[string]domain.InstalledRepo{
+			"https://github.com/example/instantrepo": {
+				ID:            7,
+				RawURL:        "https://github.com/example/InstantRepo.git",
+				NormalizedURL: "https://github.com/example/instantrepo",
+				LocalPath:     missingDuplicatePath,
+				Status:        domain.InstalledRepoStatusAnalyzed,
+			},
+		},
+		byLocalPath: map[string]domain.InstalledRepo{
+			targetPath: {
+				ID:            11,
+				RawURL:        "https://github.com/example/other.git",
+				NormalizedURL: "https://github.com/example/other",
+				LocalPath:     targetPath,
+				Status:        domain.InstalledRepoStatusAnalyzed,
+			},
+		},
+	}
+	app := NewAppServiceWithInstalledRepoStore(store)
+	app.disk = fakeDiskChecker{freeBytes: 5 * clonePreflightGiB}
+
+	resp, err := app.ClonePreflight(context.Background(), domain.ClonePreflightRequest{
+		RepoURL:         "https://github.com/Example/InstantRepo.git",
+		DestinationRoot: destination,
+	})
+	if err != nil {
+		t.Fatalf("ClonePreflight returned error: %v", err)
+	}
+
+	if len(resp.DuplicateRepos) != 0 {
+		t.Fatalf("expected missing duplicate path to be ignored, got %+v", resp.DuplicateRepos)
+	}
+	if resp.PathConflict || len(resp.PathConflictRepos) != 0 {
+		t.Fatalf("expected missing tracked target path to be ignored, got conflict %v repos %+v", resp.PathConflict, resp.PathConflictRepos)
+	}
+	if resp.RecommendedAction != domain.CloneActionClone {
+		t.Fatalf("expected action %q, got %q", domain.CloneActionClone, resp.RecommendedAction)
 	}
 }
 

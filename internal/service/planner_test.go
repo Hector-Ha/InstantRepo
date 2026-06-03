@@ -27,6 +27,33 @@ func TestBuildPlanSafetyScanIgnoresGeneratedFolders(t *testing.T) {
 	}
 }
 
+func TestBuildPlanSkipsEnvSetupForEvidenceOnlyEnvVars(t *testing.T) {
+	repoPath := t.TempDir()
+	plan := NewPlanner().BuildPlan(domain.RepositoryAnalysis{
+		ProjectName: "evidence-only-env",
+		ProjectType: "node-project",
+		RepoPath:    repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{Name: "OPENAI_API_KEY", Source: ".env.production", FillStrategy: "user_required"},
+			},
+		},
+	}, domain.EnvironmentReport{})
+
+	if hasPlannerStep(plan.Steps, "create-env-file") {
+		t.Fatalf("expected no env setup step without a local env target, got %+v", plan.Steps)
+	}
+}
+
+func hasPlannerStep(steps []domain.ExecutionStep, id string) bool {
+	for _, step := range steps {
+		if step.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func writePlannerTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

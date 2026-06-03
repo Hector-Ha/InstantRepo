@@ -49,6 +49,7 @@ export interface EnvVarRequirement {
   service?: string;
   suggestedValue?: string;
   instructions?: string[];
+  targetDir?: string;
 }
 
 export interface EnvironmentConfig {
@@ -311,6 +312,7 @@ export interface InstalledRepoSummary {
   id: number;
   projectName: string;
   localPath: string;
+  localPathExists: boolean;
   status: string;
   lastAnalyzedAt: string;
   lastSetupAt: string;

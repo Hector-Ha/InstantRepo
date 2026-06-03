@@ -1,4 +1,9 @@
-import type { EnvDraft, EnvDraftTarget, EnvVaultBinding } from "./types";
+import type {
+  AnalyzeSnapshot,
+  EnvDraft,
+  EnvDraftTarget,
+  EnvVaultBinding,
+} from "./types";
 
 const envLinePattern = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/;
 
@@ -92,12 +97,32 @@ export function applyRawTargetContent(
       item.value = nextValue;
       item.vaultBinding = undefined;
     }
+    const knownNames = new Set(target.values.map((item) => item.name));
+    for (const [name, value] of values) {
+      if (knownNames.has(name)) {
+        continue;
+      }
+      target.values.push({
+        name,
+        value,
+        secret: false,
+        confidence: 1,
+        provenance: { source: "draft" },
+      });
+    }
   }
   return next;
 }
 
 export function vaultBindingLabel(binding: EnvVaultBinding): string {
   return binding.displayName?.trim() || binding.label?.trim() || "Vault value";
+}
+
+export function canBuildEnvDraftFromPlan(snapshot: AnalyzeSnapshot): boolean {
+  if (snapshot.plan.env.targetPath?.trim()) {
+    return true;
+  }
+  return snapshot.plan.env.variables.some((item) => item.targetDir?.trim());
 }
 
 function parseRawValues(content: string) {
@@ -107,7 +132,18 @@ function parseRawValues(content: string) {
     if (!match) {
       continue;
     }
-    values.set(match[1], match[2].trim());
+    values.set(match[1], cleanRawEnvValue(match[2]));
   }
   return values;
+}
+
+function cleanRawEnvValue(value: string) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }

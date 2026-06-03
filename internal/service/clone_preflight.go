@@ -142,6 +142,9 @@ func (s *AppService) clonePreflightPathConflictRepos(ctx context.Context, target
 		}
 		return nil, fmt.Errorf("find path conflict installed repo: %w", err)
 	}
+	if !installedRepoPathExists(repo) {
+		return nil, nil
+	}
 	return []domain.InstalledRepo{repo}, nil
 }
 
@@ -161,7 +164,15 @@ func (s *AppService) clonePreflightDuplicateRepos(ctx context.Context, normalize
 	if sameLocalPath(repo.LocalPath, targetPath) {
 		return nil, nil
 	}
+	if !installedRepoPathExists(repo) {
+		return nil, nil
+	}
 	return []domain.InstalledRepo{repo}, nil
+}
+
+func installedRepoPathExists(repo domain.InstalledRepo) bool {
+	info, err := os.Stat(repo.LocalPath)
+	return err == nil && info.IsDir()
 }
 
 func (s *AppService) cloneDiskStatus(destinationRoot string) domain.CloneDiskStatus {

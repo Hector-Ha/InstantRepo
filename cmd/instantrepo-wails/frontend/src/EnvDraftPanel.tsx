@@ -159,12 +159,24 @@ export function EnvDraftPanel({
                       </label>
                       <small>{valueMeta(value)}</small>
                     </div>
-                    {(value.attention?.length ?? 0) > 0 ? (
-                      <ul className="env-attention">
-                        {value.attention?.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
+                    {(value.instructions?.length ?? 0) > 0 ||
+                    (value.attention?.length ?? 0) > 0 ? (
+                      <div className="env-value-row__notes">
+                        {(value.instructions?.length ?? 0) > 0 ? (
+                          <ul className="env-instructions">
+                            {value.instructions?.map((item) => (
+                              <li key={`instruction-${item}`}>{item}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {(value.attention?.length ?? 0) > 0 ? (
+                          <ul className="env-attention">
+                            {value.attention?.map((item) => (
+                              <li key={`attention-${item}`}>{item}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ))}

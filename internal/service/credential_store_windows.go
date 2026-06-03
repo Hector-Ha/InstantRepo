@@ -84,7 +84,7 @@ func (windowsCredentialStore) Get(_ context.Context, key string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("credential key: %w", err)
 	}
-	var credentialPtr uintptr
+	var credentialPtr *winCredential
 	ret, _, callErr := procCredRead.Call(
 		uintptr(unsafe.Pointer(target)),
 		uintptr(winCredTypeGeneric),
@@ -97,13 +97,16 @@ func (windowsCredentialStore) Get(_ context.Context, key string) (string, error)
 		}
 		return "", ErrCredentialUnavailable
 	}
-	defer procCredFree.Call(credentialPtr)
+	defer procCredFree.Call(uintptr(unsafe.Pointer(credentialPtr)))
 
-	credential := (*winCredential)(unsafe.Pointer(credentialPtr))
-	if credential.CredentialBlob == nil || credential.CredentialBlobSize == 0 {
+	if credentialPtr.CredentialBlob == nil || credentialPtr.CredentialBlobSize == 0 {
 		return "", ErrCredentialUnavailable
 	}
-	raw := unsafe.Slice(credential.CredentialBlob, credential.CredentialBlobSize)
+	blobSize := int(credentialPtr.CredentialBlobSize)
+	if blobSize <= 0 || blobSize > winCredentialBlobMaxBytes {
+		return "", ErrCredentialUnavailable
+	}
+	raw := unsafe.Slice(credentialPtr.CredentialBlob, blobSize)
 	words := make([]uint16, 0, len(raw)/2)
 	for i := 0; i+1 < len(raw); i += 2 {
 		word := uint16(raw[i]) | uint16(raw[i+1])<<8

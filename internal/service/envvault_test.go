@@ -235,6 +235,35 @@ func TestEnvVaultManagerListReturnsValueFreeUsageAndApprovals(t *testing.T) {
 	}
 }
 
+func TestEnvVaultManagerListReturnsEmptyCollectionsWithoutHistory(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openServiceTestSQLiteStore(t)
+	defer sqliteStore.Close()
+	app := newEnvVaultTestApp(sqliteStore, sqliteStore, newFakeCredentialStore())
+	saveReadyVaultEntry(t, app, "openai", "OPENAI_API_KEY", "sk-manager-secret-value")
+
+	resp, err := app.ListEnvVaultEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListEnvVaultEntries returned error: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one manager entry, got %+v", resp.Entries)
+	}
+	if resp.Entries[0].Usage.Locations == nil {
+		t.Fatalf("expected empty usage locations slice, got nil")
+	}
+	if resp.Entries[0].Approvals == nil {
+		t.Fatalf("expected empty approvals slice, got nil")
+	}
+	rawJSON, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal manager response: %v", err)
+	}
+	if strings.Contains(string(rawJSON), "null") {
+		t.Fatalf("expected manager response to use empty arrays, got:\n%s", string(rawJSON))
+	}
+}
+
 func TestEnvVaultRevealRequiresConfirmation(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore := openServiceTestSQLiteStore(t)

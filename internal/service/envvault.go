@@ -204,6 +204,9 @@ func (v *EnvVaultService) List(ctx context.Context) (domain.EnvVaultManagerRespo
 		if err != nil {
 			return domain.EnvVaultManagerResponse{}, err
 		}
+		if approvals == nil {
+			approvals = []domain.EnvVaultApproval{}
+		}
 		uses, err := v.store.EnvVaultUseRecords(ctx, entry.ID)
 		if err != nil {
 			return domain.EnvVaultManagerResponse{}, err

@@ -66,3 +66,33 @@ test("EnvVaultManager renders value-free credential metadata and actions", () =>
   expect(html).toContain("Reveal");
   expect(html).not.toContain("sk-");
 });
+
+test("EnvVaultManager treats null usage and approval lists as empty", () => {
+  const sparseEntry = {
+    ...entry,
+    usage: {
+      totalUseCount: 0,
+      locations: null,
+    },
+    approvals: null,
+  } as unknown as EnvVaultManagerEntry;
+
+  const html = renderToStaticMarkup(
+    <EnvVaultManager
+      entries={[sparseEntry]}
+      loading={false}
+      revealedValues={{}}
+      onRefresh={noop}
+      onReveal={noop}
+      onRename={noop}
+      onUpdateValue={noop}
+      onRemove={noop}
+      onStatusChange={noop}
+      onApprove={noop}
+      onRevokeApproval={noop}
+    />,
+  );
+
+  expect(html).toContain("No recorded use.");
+  expect(html).toContain("No repo approvals.");
+});

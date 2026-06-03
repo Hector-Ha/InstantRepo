@@ -70,13 +70,14 @@ func installedRepoSummary(repo domain.InstalledRepo, sessions []domain.SetupSess
 	}
 
 	return domain.InstalledRepoSummary{
-		ID:             repo.ID,
-		ProjectName:    installedRepoProjectName(repo),
-		LocalPath:      repo.LocalPath,
-		Status:         repo.Status,
-		LastAnalyzedAt: repo.LastAnalyzedAt,
-		LastSetupAt:    lastSetupAt,
-		LastActivityAt: lastActivityAt,
+		ID:              repo.ID,
+		ProjectName:     installedRepoProjectName(repo),
+		LocalPath:       repo.LocalPath,
+		LocalPathExists: installedRepoPathExists(repo),
+		Status:          repo.Status,
+		LastAnalyzedAt:  repo.LastAnalyzedAt,
+		LastSetupAt:     lastSetupAt,
+		LastActivityAt:  lastActivityAt,
 	}
 }
 

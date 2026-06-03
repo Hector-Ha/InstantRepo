@@ -25,7 +25,13 @@ func TestPrepareEnvWritesCatalogDraft(t *testing.T) {
 			Variables: []domain.EnvVarRequirement{
 				{Name: "JWT_SECRET", Secret: true},
 				{Name: "OPENAI_API_KEY", Secret: true},
-				{Name: "DATABASE_URL", Secret: true},
+				{
+					Name:   "DATABASE_URL",
+					Secret: true,
+					TopologySignals: []domain.AppTopologySignal{
+						{Kind: "data_store", Service: "postgres", Evidence: "docker-compose service postgres", Confidence: 0.9},
+					},
+				},
 			},
 		},
 	})
@@ -44,10 +50,11 @@ func TestPrepareEnvWritesCatalogDraft(t *testing.T) {
 		t.Fatalf("read target env: %v", err)
 	}
 	content := string(raw)
+	databaseURL := "postgres://postgres:postgres@localhost:5432/" + envDatabaseName("", repoPath)
 	for _, want := range []string{
 		"JWT_SECRET=generated-secret",
 		"OPENAI_API_KEY=",
-		"DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres",
+		"DATABASE_URL=" + databaseURL,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("expected %q in generated env, got:\n%s", want, content)

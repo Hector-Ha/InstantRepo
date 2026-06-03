@@ -182,6 +182,33 @@ func TestBuildEnvDraftRepresentsTwoTargetFiles(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDraftTargetsExistingEnvLocalFile(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{
+  "dependencies": {"next": "latest", "react": "latest"},
+  "scripts": {"dev": "next dev"}
+}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.local"), "NEXT_PUBLIC_APP_URL=http://localhost:3000\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env.local")
+	if envDraftValue(t, target, "NEXT_PUBLIC_APP_URL").Value != "http://localhost:3000" {
+		t.Fatalf("expected existing .env.local value to be preserved, got %+v", target.Values)
+	}
+	if len(draft.Targets) != 1 {
+		t.Fatalf("expected only .env.local target, got %+v", draft.Targets)
+	}
+}
+
 func TestBuildEnvDraftInfersClientAndServerTargetsFromViteImportMetaUsage(t *testing.T) {
 	repoPath := t.TempDir()
 	clientDir := filepath.Join(repoPath, "client")
@@ -213,6 +240,35 @@ func TestBuildEnvDraftInfersClientAndServerTargetsFromViteImportMetaUsage(t *tes
 	}
 	if envDraftValue(t, serverTarget, "SESSION_SECRET").Name == "" {
 		t.Fatalf("expected SESSION_SECRET in server target")
+	}
+}
+
+func TestBuildEnvDraftDeduplicatesNonLocalEvidenceAndSourceUsage(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{
+  "name": "dup-env",
+  "scripts": {"dev": "node index.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.production"), "API_SECRET=prod-only\n")
+	writeServiceTestFile(t, filepath.Join(repoPath, "index.js"), "console.log(process.env.API_SECRET)\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	values := envDraftValues(target, "API_SECRET")
+	if len(values) != 1 {
+		t.Fatalf("expected one API_SECRET value in target, got %+v", target.Values)
+	}
+	if values[0].Value != "" {
+		t.Fatalf("expected production evidence value not to populate draft, got %q", values[0].Value)
 	}
 }
 
@@ -252,6 +308,35 @@ func TestBuildEnvDraftUsesEnvRequirementConfidence(t *testing.T) {
 	value := envDraftValue(t, draft.Targets[0], "APP_URL")
 	if value.Confidence != 0.45 {
 		t.Fatalf("expected confidence 0.45, got %v", value.Confidence)
+	}
+}
+
+func TestApplyEditedEnvDraftValuesKeepsNewUserAssignments(t *testing.T) {
+	targets := []domain.EnvDraftTarget{
+		{
+			RelativePath: ".env",
+			Values: []domain.EnvDraftValue{
+				{Name: "API_URL", Value: "http://localhost:8080"},
+			},
+		},
+	}
+	edited := []domain.EnvDraftTarget{
+		{
+			RelativePath: ".env",
+			Values: []domain.EnvDraftValue{
+				{Name: "API_URL", Value: "http://localhost:3000"},
+				{Name: "GREETING", Value: "hello world", Provenance: domain.EnvValueProvenance{Source: domain.EnvValueSourceDraft}},
+			},
+		},
+	}
+
+	applyEditedEnvDraftValues(targets, edited)
+
+	if envDraftValue(t, targets[0], "API_URL").Value != "http://localhost:3000" {
+		t.Fatalf("expected existing value edit, got %+v", targets[0].Values)
+	}
+	if envDraftValue(t, targets[0], "GREETING").Value != "hello world" {
+		t.Fatalf("expected new user assignment to be preserved, got %+v", targets[0].Values)
 	}
 }
 
@@ -407,6 +492,35 @@ func TestBuildEnvDraftLeavesServiceCredentialBlank(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDraftCarriesAnalyzerInstructions(t *testing.T) {
+	repoPath := t.TempDir()
+
+	draft, err := NewEnvDraftManager().BuildDraft(domain.RepositoryAnalysis{
+		RepoPath: repoPath,
+		Env: domain.EnvironmentConfig{
+			Variables: []domain.EnvVarRequirement{
+				{
+					Name:      "CUSTOM_SECRET",
+					TargetDir: repoPath,
+					Secret:    true,
+					Instructions: []string{
+						"Obtain the required value for CUSTOM_SECRET from the project owner.",
+						"Do not commit secrets to source control.",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	value := envDraftValue(t, draft.Targets[0], "CUSTOM_SECRET")
+	if !containsText(value.Instructions, "project owner") || !containsText(value.Instructions, "Do not commit secrets") {
+		t.Fatalf("expected analyzer instructions to reach draft value, got %+v", value.Instructions)
+	}
+}
+
 func TestBuildEnvDraftLeavesProviderConfigBlank(t *testing.T) {
 	repoPath := t.TempDir()
 
@@ -435,7 +549,7 @@ func TestBuildEnvDraftLeavesProviderConfigBlank(t *testing.T) {
 	}
 }
 
-func TestBuildEnvDraftAppliesDevDefaultFromCatalog(t *testing.T) {
+func TestBuildEnvDraftAppliesDatabaseDefaultWithLocalEvidence(t *testing.T) {
 	repoPath := t.TempDir()
 
 	manager := NewEnvDraftManager()
@@ -443,7 +557,14 @@ func TestBuildEnvDraftAppliesDevDefaultFromCatalog(t *testing.T) {
 		RepoPath: repoPath,
 		Env: domain.EnvironmentConfig{
 			Variables: []domain.EnvVarRequirement{
-				{Name: "DATABASE_URL", TargetDir: repoPath, Secret: true},
+				{
+					Name:      "DATABASE_URL",
+					TargetDir: repoPath,
+					Secret:    true,
+					TopologySignals: []domain.AppTopologySignal{
+						{Kind: "data_store", Service: "postgres", Evidence: "docker-compose service postgres", Confidence: 0.9},
+					},
+				},
 			},
 		},
 	})
@@ -452,14 +573,15 @@ func TestBuildEnvDraftAppliesDevDefaultFromCatalog(t *testing.T) {
 	}
 
 	value := envDraftValue(t, draft.Targets[0], "DATABASE_URL")
-	if value.Value != "postgres://postgres:postgres@localhost:5432/postgres" {
+	want := "postgres://postgres:postgres@localhost:5432/" + envDatabaseName("", repoPath)
+	if value.Value != want {
 		t.Fatalf("expected database dev default, got %q", value.Value)
 	}
 	if value.ValueClass != domain.EnvValueClassDevDefault {
 		t.Fatalf("expected dev default class, got %q", value.ValueClass)
 	}
-	if value.Provenance.Source != domain.EnvValueSourceCatalog {
-		t.Fatalf("expected catalog provenance, got %q", value.Provenance.Source)
+	if value.Provenance.Source != domain.EnvValueSourceAllocator {
+		t.Fatalf("expected allocator provenance, got %q", value.Provenance.Source)
 	}
 }
 
@@ -498,6 +620,124 @@ func TestBuildEnvDraftAllocatesFrontendBackendDefaultsFromTopology(t *testing.T)
 	}
 	if got := envDraftValue(t, webTarget, "VITE_API_URL").Value; got != "http://localhost:8080" {
 		t.Fatalf("expected frontend API URL to point at backend, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftUsesAPPPortEvidenceForFrontendServerURL(t *testing.T) {
+	repoPath := t.TempDir()
+	clientDir := filepath.Join(repoPath, "client")
+	serverDir := filepath.Join(repoPath, "server")
+	writeServiceTestFile(t, filepath.Join(clientDir, "package.json"), `{
+  "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"}
+}`)
+	writeServiceTestFile(t, filepath.Join(clientDir, "src", "main.ts"), "const serverURL = import.meta.env.VITE_SERVER_URL\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "package.json"), `{
+  "dependencies": {"express": "latest"},
+  "scripts": {"dev": "node src/index.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(serverDir, "src", "index.ts"), `const port = process.env.APP_PORT || "4000"`)
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	clientTarget := envDraftTarget(t, draft, filepath.Join("client", ".env"))
+	serverTarget := envDraftTarget(t, draft, filepath.Join("server", ".env"))
+	if got := envDraftValue(t, serverTarget, "APP_PORT").Value; got != "4000" {
+		t.Fatalf("expected APP_PORT to use source fallback 4000, got %q", got)
+	}
+	if got := envDraftValue(t, clientTarget, "VITE_SERVER_URL").Value; got != "http://localhost:4000" {
+		t.Fatalf("expected VITE_SERVER_URL to point at APP_PORT backend, got %q", got)
+	}
+}
+
+func TestBuildEnvDraftAppliesRepoVersionEdgeCaseDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		serverVersion string
+		want          string
+	}{
+		{name: "matching version", serverVersion: "1.0.0", want: "4000"},
+		{name: "unmatched version", serverVersion: "9.9.9", want: "8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			serverDir := filepath.Join(repoPath, "server")
+			writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{
+  "name": "altshift-monorepo",
+  "version": "1.0.0",
+  "workspaces": ["server"]
+}`)
+			writeServiceTestFile(t, filepath.Join(serverDir, "package.json"), fmt.Sprintf(`{
+  "name": "server",
+  "version": %q,
+  "dependencies": {"express": "latest"}
+}`, tc.serverVersion))
+			writeServiceTestFile(t, filepath.Join(serverDir, "src", "index.ts"), "require('express')().listen(process.env.APP_PORT)")
+
+			analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+			if err != nil {
+				t.Fatalf("Analyze returned error: %v", err)
+			}
+
+			draft, err := NewEnvDraftManager().BuildDraft(analysis)
+			if err != nil {
+				t.Fatalf("BuildDraft returned error: %v", err)
+			}
+
+			serverTarget := envDraftTarget(t, draft, filepath.Join("server", ".env"))
+			value := envDraftValue(t, serverTarget, "APP_PORT")
+			if value.Value != tc.want {
+				t.Fatalf("expected APP_PORT %s for server version %s, got %+v", tc.want, tc.serverVersion, value)
+			}
+			if tc.want == "4000" && (value.Provenance.Source != domain.EnvValueSourceCatalog || value.ValueClass != domain.EnvValueClassDevDefault) {
+				t.Fatalf("expected repo edge-case catalog provenance, got %+v", value)
+			}
+		})
+	}
+}
+
+func TestBuildEnvDraftKeepsSingleRootEnvWhenDocsSaySingleEnvFile(t *testing.T) {
+	repoPath := t.TempDir()
+	clientDir := filepath.Join(repoPath, "client")
+	serverDir := filepath.Join(repoPath, "server-go")
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "APP_NAME=\n")
+	writeServiceTestFile(t, filepath.Join(repoPath, "README.md"), "This is the single env file for the monorepo. Copy .env.example to .env in the repo root.\n")
+	writeServiceTestFile(t, filepath.Join(clientDir, "package.json"), `{"dependencies":{"next":"latest","react":"latest"}}`)
+	writeServiceTestFile(t, filepath.Join(clientDir, "src", "app.tsx"), "console.log(process.env.NEXT_PUBLIC_API_URL)\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "go.mod"), "module interlock.test/server\n\ngo 1.22\n")
+	writeServiceTestFile(t, filepath.Join(serverDir, "main.go"), strings.Join([]string{
+		`package main`,
+		`import "os"`,
+		`func main() {`,
+		`	_, _ = os.Getenv("DATABASE_URL"), os.Getenv("JWT_SECRET")`,
+		`}`,
+	}, "\n"))
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	if len(draft.Targets) != 1 {
+		t.Fatalf("expected single root env target, got %+v", draft.Targets)
+	}
+	target := envDraftTarget(t, draft, ".env")
+	for _, name := range []string{"APP_NAME", "NEXT_PUBLIC_API_URL", "DATABASE_URL", "JWT_SECRET"} {
+		if envDraftValue(t, target, name).Name == "" {
+			t.Fatalf("expected %s in root target", name)
+		}
 	}
 }
 
@@ -568,6 +808,98 @@ func TestBuildEnvDraftFillsSafeClientServerDefaultsAndLeavesProviderKeysBlank(t 
 		if value.ValueClass != domain.EnvValueClassServiceCredential {
 			t.Fatalf("expected provider credential class for %s, got %+v", name, value)
 		}
+	}
+}
+
+func TestBuildEnvDraftLeavesExternalAPIURLBlankForBackendOnlyTarget(t *testing.T) {
+	repoPath := t.TempDir()
+	apiDir := filepath.Join(repoPath, "api")
+	writeServiceTestFile(t, filepath.Join(apiDir, "package.json"), `{
+  "dependencies": {"express": "latest"},
+  "scripts": {"dev": "node server.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(apiDir, "server.js"), strings.Join([]string{
+		`const express = require("express")`,
+		"console.log(process.env.THIRD_PARTY_API_URL)",
+		"express().listen(process.env.PORT || 8080)",
+	}, "\n"))
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	apiTarget := envDraftTarget(t, draft, filepath.Join("api", ".env"))
+	value := envDraftValue(t, apiTarget, "THIRD_PARTY_API_URL")
+	if value.Value != "" {
+		t.Fatalf("expected external API URL to stay blank, got %+v", value)
+	}
+	if value.ValueClass == domain.EnvValueClassDevDefault || value.Provenance.Source == domain.EnvValueSourceAllocator {
+		t.Fatalf("expected no allocator dev default for external API URL, got %+v", value)
+	}
+}
+
+func TestBuildEnvDraftLeavesExternalAPIURLBlankForFrontendTarget(t *testing.T) {
+	repoPath := t.TempDir()
+	webDir := filepath.Join(repoPath, "web")
+	apiDir := filepath.Join(repoPath, "api")
+	writeServiceTestFile(t, filepath.Join(webDir, "package.json"), `{
+  "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"}
+}`)
+	writeServiceTestFile(t, filepath.Join(webDir, "src", "main.ts"), "console.log(import.meta.env.VITE_THIRD_PARTY_API_URL)\n")
+	writeServiceTestFile(t, filepath.Join(apiDir, "package.json"), `{
+  "dependencies": {"express": "latest"},
+  "scripts": {"dev": "node server.js"}
+}`)
+	writeServiceTestFile(t, filepath.Join(apiDir, "server.js"), `require("express")().listen(8080)`)
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	webTarget := envDraftTarget(t, draft, filepath.Join("web", ".env"))
+	value := envDraftValue(t, webTarget, "VITE_THIRD_PARTY_API_URL")
+	if value.Value != "" {
+		t.Fatalf("expected frontend third-party API URL to stay blank, got %+v", value)
+	}
+	if value.ValueClass == domain.EnvValueClassDevDefault || value.Provenance.Source == domain.EnvValueSourceAllocator {
+		t.Fatalf("expected no allocator dev default for frontend third-party API URL, got %+v", value)
+	}
+}
+
+func TestBuildEnvDraftLeavesExternalPostgresURLBlankWithoutLocalEvidence(t *testing.T) {
+	repoPath := t.TempDir()
+	writeServiceTestFile(t, filepath.Join(repoPath, "package.json"), `{"name":"external-db","scripts":{"dev":"node index.js"}}`)
+	writeServiceTestFile(t, filepath.Join(repoPath, ".env.example"), "DATABASE_URL=postgres://db.example.com/prod\n")
+
+	analysis, err := analyzer.NewRepositoryAnalyzer().Analyze(repoPath, domain.EnvironmentReport{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	draft, err := NewEnvDraftManager().BuildDraft(analysis)
+	if err != nil {
+		t.Fatalf("BuildDraft returned error: %v", err)
+	}
+
+	target := envDraftTarget(t, draft, ".env")
+	value := envDraftValue(t, target, "DATABASE_URL")
+	if value.Value != "" {
+		t.Fatalf("expected external Postgres URL to stay blank, got %+v", value)
+	}
+	if value.ValueClass == domain.EnvValueClassDevDefault || value.Provenance.Source == domain.EnvValueSourceAllocator {
+		t.Fatalf("expected no local dev default for external Postgres URL, got %+v", value)
 	}
 }
 
@@ -1087,6 +1419,16 @@ func envDraftValue(t *testing.T, target domain.EnvDraftTarget, name string) doma
 	}
 	t.Fatalf("expected value %s in target %+v", name, target)
 	return domain.EnvDraftValue{}
+}
+
+func envDraftValues(target domain.EnvDraftTarget, name string) []domain.EnvDraftValue {
+	var values []domain.EnvDraftValue
+	for _, value := range target.Values {
+		if value.Name == name {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func hasTopologySignal(topology domain.AppTopology, kind, targetDir string) bool {

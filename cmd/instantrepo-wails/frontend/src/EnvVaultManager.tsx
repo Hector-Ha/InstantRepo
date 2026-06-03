@@ -68,6 +68,13 @@ export function EnvVaultManager({
         <div className="vault-manager-list">
           {entries.map((entry) => {
             const revealedValue = revealedValues[entry.id];
+            const usageLocations = Array.isArray(entry.usage?.locations)
+              ? entry.usage.locations
+              : [];
+            const totalUseCount = entry.usage?.totalUseCount ?? 0;
+            const approvals = Array.isArray(entry.approvals)
+              ? entry.approvals
+              : [];
             return (
               <article className="vault-manager-entry" key={entry.id}>
                 <div className="vault-manager-entry__top">
@@ -165,12 +172,12 @@ export function EnvVaultManager({
 
                 <div className="vault-manager-entry__details">
                   <section>
-                    <h4>{usageLabel(entry.usage.totalUseCount)}</h4>
-                    {entry.usage.locations.length === 0 ? (
+                    <h4>{usageLabel(totalUseCount)}</h4>
+                    {usageLocations.length === 0 ? (
                       <p>No recorded use.</p>
                     ) : (
                       <ul>
-                        {entry.usage.locations.map((location) => (
+                        {usageLocations.map((location) => (
                           <li
                             key={`${location.repoPath}-${location.targetRelativePath}-${location.variableName}`}
                           >
@@ -185,11 +192,11 @@ export function EnvVaultManager({
 
                   <section>
                     <h4>Approvals</h4>
-                    {entry.approvals.length === 0 ? (
+                    {approvals.length === 0 ? (
                       <p>No repo approvals.</p>
                     ) : (
                       <ul>
-                        {entry.approvals.map((approval) => (
+                        {approvals.map((approval) => (
                           <li key={approval.id}>
                             <strong>{approval.targetRelativePath}</strong>
                             <span>{approval.repoPath}</span>

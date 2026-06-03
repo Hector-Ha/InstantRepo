@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "repo-edge-cases/v1",
+  "rules": [
+    {
+      "id": "altshift-server-1.0.0-app-port",
+      "repo": {
+        "remotes": ["github.com/hector-ha/altshift"],
+        "projectNames": ["altshift-monorepo"]
+      },
+      "manifest": {
+        "path": "server/package.json",
+        "versionConstraint": "1.0.0"
+      },
+      "env": [
+        {
+          "targetDir": "server",
+          "name": "APP_PORT",
+          "defaultValue": "4000",
+          "valueClass": "dev_default",
+          "confidence": 0.94,
+          "instructions": [
+            "AltShift server 1.0.0 uses APP_PORT for the local API port."
+          ]
+        }
+      ]
+    }
+  ]
+}

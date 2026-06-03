@@ -56,6 +56,9 @@ func detectAppTopology(repoPath string, env domain.EnvironmentConfig, services [
 		if !isLocalDataService(service.Name) {
 			continue
 		}
+		if service.Scope != "local" && service.Provisioning != "docker-compose" {
+			continue
+		}
 		signals = appendTopologySignal(signals, domain.AppTopologySignal{
 			Kind:       dataServiceKind(service.Name),
 			Service:    service.Name,
@@ -75,7 +78,7 @@ func detectAppTopology(repoPath string, env domain.EnvironmentConfig, services [
 
 func isPortEnvVar(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "PORT", "API_PORT", "BACKEND_PORT", "SERVER_PORT":
+	case "PORT", "APP_PORT", "API_PORT", "BACKEND_PORT", "SERVER_PORT":
 		return true
 	default:
 		return false

@@ -1,353 +1,172 @@
 # AGENTS.md
 
-Me agent. Me follow this file. Keep talk caveman: short words, clear words, no fancy fluff.
+For code review tasks, use `REVIEWERS.md` as the task guide. `REVIEWERS.md` is authoritative for review stance, output shape, and review checks.
+
+Me agent. Me follow this file for implementation, docs, triage, QA, and repo work. Keep talk caveman: short words, clear words, no fancy fluff.
 
 ## Project
 
-InstantRepo be Go + Wails app. It helps user set up local repos.
+InstantRepo is a Go + Wails app that helps users prepare local repos safely.
 
-- Backend engine: Go in `internal`.
+- Backend engine: `internal/service`, `internal/analyzer`, `internal/store`.
 - CLI/API entry: `cmd/instantrepo`.
-- Desktop app: Wails in `cmd/instantrepo-wails`.
+- Desktop app: `cmd/instantrepo-wails`.
 - Frontend: React + Vite + TypeScript in `cmd/instantrepo-wails/frontend`.
-- CLI mirror: parser and app-data policy in `internal/command`.
-- Local metadata store: SQLite in `internal/store`.
-- Tests: Go tests beside code, plus manual plan in `test/TEST_PLAN.md`.
+- CLI mirror parser and app-data policy: `internal/command`.
+- Local metadata store: SQLite in `internal/store`; no raw secrets.
 
-## Agent skills
+## Agent Skills
 
-### Issue tracker
-
-Issues live in GitHub Issues for `Hector-Ha/InstantRepo`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Use default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context repo: root `CONTEXT.md`, future ADRs in `docs/adr/`. See `docs/agents/domain.md`.
-
-### Skill workflow
-
-- Use `triage` when changing issue state or preparing an issue for human/agent work.
-- Use `to-prd` only when turning a new discussion into a PRD issue.
-- Use `to-issues` only after PRD/plan is clear enough for implementation slices.
-- Use `tdd` when implementing issue work or fixing a bug.
-- Use `handoff` before stopping long work that another agent must continue.
+- Use `triage` when changing issue state or preparing issue work.
+- Use `to-prd` only when turning discussion into a PRD issue.
+- Use `to-issues` only after PRD/plan is clear enough for slices.
+- Use `tdd` when implementing issue work or fixing bugs.
+- Use `handoff` before stopping long work another agent must continue.
 - Use `caveman-commit` for commit messages.
+- Use `caveman-review` for review comments.
+- Use `create-readme` for README changes.
+- Use `create-agentsmd` for AGENTS.md changes.
+- Use `vercel-react-best-practices` for React/Next work.
 
-## Active Roadmap
+## Context
 
-Read `CONTEXT.md` and ADRs before touching roadmap work.
+Read `CONTEXT.md` and `docs/adr/` before roadmap or domain-sensitive work.
 
-### Completed Env Draft Track
+Issue tracker:
 
-Env Draft foundation is complete through these public issues:
+- GitHub Issues: `Hector-Ha/InstantRepo`.
+- Issue tracker docs: `docs/agents/issue-tracker.md`.
+- Triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`.
 
-- `#15` Catalog-driven Env Drafts and Vault-backed Credentials.
-- `#16` Build structured Env Draft model with provenance and safe Save All.
-- `#17` Infer local env targets from env files and code usage.
-- `#18` Apply Env Default Catalog rules for secrets, credentials, and dev defaults.
-- `#19` Detect App Topology and allocate coherent local dev values.
-- `#20` Ship structured Env Draft UI with grouped targets and raw vault tags.
-- `#21` Add User Env Vault backend with OS credential storage and approvals.
-- `#22` Build Env Vault Manager for credentials, usage, and action-needed states.
-- `#23` Add Env Pattern Contribution settings, public filtering, and offline queue.
-- `#24` Add AI Env Review Bundle and Env Patch validation.
+Roadmap state:
 
-Architecture cleanup is also complete:
+- Env Draft foundation is complete through #15-#24.
+- Architecture cleanup is complete through #25-#27.
+- CLI mirror foundation is complete through #35-#40.
+- Verify GitHub before saying #34 or #41 is closed.
+- Current Env Draft follow-up work is under #42-#45.
 
-- `#25` PRD: Deepen setup architecture after Env Draft foundation. Closed.
-- `#26` Deepen setup safety scan with ignored generated folders. Closed.
-- `#27` Deepen Env Draft foundation interfaces for target inference and save policy. Closed.
+Key docs:
 
-### CLI Mirror Track
+- CLI mirror contract: `docs/cli-mirror.md`.
+- Private QA boundary: `docs/adr/0003-use-private-local-qa-harness-with-safe-cli-surfaces.md`.
+- Manual QA plan: `test/TEST_PLAN.md`.
 
-Public CLI mirroring is product work, not QA-only work. Private QA is only one consumer.
+## Private QA
 
-Parent PRD:
-
-- `#34` Mirror Wails app operations through production-safe CLI.
-
-Completed foundation:
-
-- `#35` Add CLI mirror foundation, JSON contract, and app-data isolation. Closed.
-- `#36` Mirror repository analyze, import, preflight, and execute in CLI. Closed.
-- `#37` Mirror Env Draft generate and save flows in CLI. Closed.
-- `#38` Mirror installed repo history and diagnostics in CLI. Closed.
-- `#39` Mirror Env Vault operations in secret-safe CLI. Closed.
-- `#40` Mirror settings and bridge contract metadata in CLI. Closed.
-
-Current local state:
-
-1. `docs/cli-mirror.md` exists locally with command map, JSON contract, app-data isolation, and private QA boundary.
-2. `.qa-local/README.md` exists locally with private harness runbook.
-3. App-data policy is split into `internal/command/app_data.go`; metadata commands validate app data paths without creating Local App Database dirs.
-4. Verify GitHub issue state before saying `#41` or parent `#34` is closed.
-
-Do not implement private QA harness code in public issues. Public work must stay production-safe.
-
-### Private QA Workspace
-
-`.qa-local/` is ignored by git and may contain private QA harness docs, local issues, scenarios, reports, screenshots, logs, and evidence.
+`.qa-local/` is ignored and private.
 
 - Do not commit `.qa-local/`.
-- Use `.qa-local/` only when the tester asks for QA work.
-- Public GitHub issues must not include secrets or private harness implementation details.
-- Public app must not gain QA-only backdoors, hidden debug bridges, raw shell endpoints, or approval bypasses.
+- Use `.qa-local/` only when tester asks for QA/private harness work.
+- Public issues/docs must not include secrets or private harness details.
+- Public app must not add QA-only backdoors, hidden debug bridges, raw shell endpoints, approval bypasses, or shipped QA overlays.
 - Release/user artifacts must not include `.qa-local/`, QA overlays, private reports, screenshots, evidence, or private shim code.
-- Local private QA issues live in `.qa-local/issues`.
-- Current private harness is implemented under `.qa-local/harness` with run state, scenario packs, pinned builds, shim, safety policy, reports, cleanup, and Wails smoke tests.
-
-Current important Env modules:
-
-- `internal/analyzer/env_target_inference.go` owns Env Target Inference orchestration.
-- `internal/service/envdraft_save.go` owns Env Draft save policy.
-- `internal/service/envvault.go` owns User Env Vault backend behavior.
-- `internal/service/credential_store_windows.go` owns Windows credential-store access.
-- `internal/store/sqlite.go` stores Local App Database metadata, never raw vault values.
-- `internal/command/app_data.go` owns CLI app-data validation/preparation policy.
-- `cmd/instantrepo-wails/frontend/src/EnvDraftPanel.tsx` owns current structured Env Draft UI.
 
 ## Package Manager
 
-- Bun good. Use `bun`.
-- Use `pnpm` only if no Bun path.
-- Use `npm` last.
+- Use `bun` before `pnpm` before `npm`.
 - Use `bunx` before `npx`.
 
 ## Setup
 
-Install frontend deps:
-
 ```bash
 cd cmd/instantrepo-wails/frontend
 bun install
-```
-
-Download Go deps:
-
-```bash
 go mod download
 ```
 
-## Dev Commands
+## Common Commands
 
-Run desktop app:
+Desktop app:
 
 ```bash
 cd cmd/instantrepo-wails
 wails dev
-```
-
-Run CLI analyze:
-
-```bash
-go run ./cmd/instantrepo repo analyze --path C:\path\to\repo
-```
-
-Run CLI clone preflight:
-
-```bash
-go run ./cmd/instantrepo repo preflight --repo https://github.com/user/repo --destination C:\work
-```
-
-Run CLI import:
-
-```bash
-go run ./cmd/instantrepo repo import --repo https://github.com/user/repo --destination C:\work
-```
-
-Run CLI execute:
-
-```bash
-go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve
-```
-
-Run CLI installed repo history:
-
-```bash
-go run ./cmd/instantrepo repo list --json
-go run ./cmd/instantrepo repo details --id 123 --json
-```
-
-Run CLI credential-free diagnostics:
-
-```bash
-go run ./cmd/instantrepo repo diagnostics --path C:\path\to\repo --json
-go run ./cmd/instantrepo repo diagnostics --id 123 --json
-```
-
-Run CLI Env Draft generate:
-
-```bash
-go run ./cmd/instantrepo env draft generate --path C:\path\to\repo --json
-```
-
-Run CLI Env Draft save:
-
-```bash
-go run ./cmd/instantrepo env draft save --path C:\path\to\repo --file C:\path\to\draft.json --json
-```
-
-Run CLI raw env save:
-
-```bash
-go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
-```
-
-Run CLI Env Vault:
-
-```bash
-go run ./cmd/instantrepo env vault list --json
-go run ./cmd/instantrepo env vault save --provider openai --variable OPENAI_API_KEY --display-name "OpenAI dev key" --stdin --json
-go run ./cmd/instantrepo env vault update --id 123 --display-name "OpenAI work key" --json
-go run ./cmd/instantrepo env vault update --id 123 --stdin --json
-go run ./cmd/instantrepo env vault remove --id 123 --json
-go run ./cmd/instantrepo env vault approve --id 123 --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
-go run ./cmd/instantrepo env vault revoke --approval-id 456 --json
-go run ./cmd/instantrepo env vault status --id 123 --status action_needed --json
-go run ./cmd/instantrepo env vault suppress --repo-path C:\path\to\repo --target .env --variable OPENAI_API_KEY --json
-go run ./cmd/instantrepo env vault reveal --id 123 --confirm-reveal --json
-```
-
-Run CLI shell info:
-
-```bash
-go run ./cmd/instantrepo shell info --json
-```
-
-Run CLI Env Pattern Contribution settings:
-
-```bash
-go run ./cmd/instantrepo settings contribution get --json
-go run ./cmd/instantrepo settings contribution save --file C:\path\to\settings.json --json
-go run ./cmd/instantrepo settings contribution consent --public-enabled true --json
-go run ./cmd/instantrepo settings contribution clear-queue --json
-```
-
-Run CLI AI Env Review settings:
-
-```bash
-go run ./cmd/instantrepo settings ai-env-review get --json
-go run ./cmd/instantrepo settings ai-env-review save --file C:\path\to\settings.json --json
-```
-
-Show CLI contract metadata:
-
-```bash
-go run ./cmd/instantrepo version --json
-```
-
-Read public CLI mirror docs:
-
-```bash
-Get-Content docs\cli-mirror.md
-```
-
-Run API:
-
-```bash
-go run ./cmd/instantrepo -serve :8080
-```
-
-Use isolated app data for CLI or Wails smoke work:
-
-```bash
-go run ./cmd/instantrepo --app-data-dir C:\temp\instantrepo-app-data -path C:\path\to\repo
-```
-
-`INSTANTREPO_APP_DATA_DIR` also isolates app metadata for CLI and Wails launches. Path must be absolute and must not be home, repo root, target repo, or inside target repo.
-
-Build desktop app:
-
-```bash
-cd cmd/instantrepo-wails
 wails build -clean
 ```
 
-Build frontend only:
+Frontend:
 
 ```bash
 cd cmd/instantrepo-wails/frontend
+bun test
 bun run build
 ```
 
-## Test
-
-Run all Go tests:
+Go tests:
 
 ```bash
 go test ./...
-```
-
-Run one package:
-
-```bash
 go test ./internal/service
-```
-
-Run one test:
-
-```bash
 go test ./internal/service -run TestName
 ```
 
-Check `.qa-local/` stays ignored:
+CLI mirror:
+
+```bash
+go run ./cmd/instantrepo version --json
+go run ./cmd/instantrepo shell info --json
+go run ./cmd/instantrepo repo analyze --path C:\path\to\repo --json
+go run ./cmd/instantrepo repo preflight --repo https://github.com/user/repo --destination C:\work --json
+go run ./cmd/instantrepo repo import --repo https://github.com/user/repo --destination C:\work --json
+go run ./cmd/instantrepo repo execute --path C:\path\to\repo --step install-node-deps --approve --json
+go run ./cmd/instantrepo repo list --json
+go run ./cmd/instantrepo repo details --id 123 --json
+go run ./cmd/instantrepo repo diagnostics --path C:\path\to\repo --json
+go run ./cmd/instantrepo env draft generate --path C:\path\to\repo --json
+go run ./cmd/instantrepo env draft save --path C:\path\to\repo --file C:\path\to\draft.json --json
+go run ./cmd/instantrepo env raw save --path C:\path\to\repo --file C:\path\to\.env --json
+go run ./cmd/instantrepo env vault list --json
+go run ./cmd/instantrepo settings contribution get --json
+go run ./cmd/instantrepo settings ai-env-review get --json
+```
+
+Isolated app data:
+
+```bash
+go run ./cmd/instantrepo --app-data-dir C:\temp\instantrepo-app-data repo analyze --path C:\path\to\repo --json
+```
+
+`INSTANTREPO_APP_DATA_DIR` also isolates CLI and Wails metadata. Path must be absolute and must not be home, drive root, repo root, target repo, or inside target repo.
+
+No-ship guard:
 
 ```bash
 go test ./internal/command -run TestPrivateQALocalWorkspaceRemainsIgnored
 git check-ignore .qa-local/
 ```
 
-Run private QA harness tests only when tester asks for QA or private harness work:
+Before done:
 
-```bash
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-scenario-pack-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-build-state-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-evidence-report-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-safety-policy-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-shim-tests.ps1
-powershell -ExecutionPolicy Bypass -File .qa-local\harness\tests\run-wails-smoke-tests.ps1
-```
-
-Before done, run `go test ./...` when Go code changed. Run `bun run build` when frontend code changed.
-Frontend tests use Bun test directly:
-
-```bash
-cd cmd/instantrepo-wails/frontend
-bun test
-```
-
-Run `wails build -clean` when Wails bindings or exposed app methods change.
+- Run `go test ./...` when Go code changed.
+- Run `bun test` and `bun run build` when frontend code changed.
+- Run `wails build -clean` when Wails bindings or exposed app methods changed.
 
 ## Code Style
 
 - Keep Go code simple. Use `gofmt`.
 - Keep errors wrapped with useful context.
 - Keep domain structs in `internal/domain`.
-- Keep analyzer-only logic in `internal/analyzer`.
-- Keep execution and planning in `internal/service`.
+- Keep analyzer logic in `internal/analyzer`.
+- Keep execution/planning in `internal/service`.
+- Keep SQL details in `internal/store`.
+- Keep CLI parsing/app-data policy in `internal/command`.
 - Do not mix UI code with service engine code.
-- Do not commit build outputs unless user ask.
 - Do not edit generated Wails files by hand unless generation is broken.
+- Do not commit build outputs unless user asks.
 
 ## React Rules
-
-Frontend is React app. Use good React ways:
 
 - Keep derived values in render or memo, not effect.
 - Use primitive effect deps where possible.
 - Use functional state updates for state based on old state.
-- Avoid heavy work during render; memoize real expensive work.
-- Import direct modules. Avoid big barrel imports.
-- Keep global listeners deduped and cleaned up.
+- Memoize only real expensive work.
+- Import direct modules. Avoid large barrel imports.
+- Clean up global listeners.
 
 ## Safety
 
-This app inspects and can run code from unknown repos. Be careful.
+InstantRepo inspects and can run code from unknown repos.
 
 - Never auto-run repo commands without explicit user request or approval path.
 - Keep approval gates for risky steps.
@@ -355,24 +174,20 @@ This app inspects and can run code from unknown repos. Be careful.
 - Preserve existing `.env` values. Never print secrets.
 - Do not write real secret values into docs or tests.
 - Do not store service credential values in SQLite, logs, issues, PRs, diagnostics, or docs.
-- User Env Vault stores raw values only in the OS credential store. If it is unavailable, fail closed; do not add plaintext fallback.
-- OS credential keys for User Env Vault must be namespaced by Local App Database identity so isolated app data cannot overwrite, reveal, or delete another app-data vault value.
+- User Env Vault stores raw values only in the OS credential store. If unavailable, fail closed.
+- OS credential keys for User Env Vault must be namespaced by Local App Database identity.
 - SQLite may store Env Vault metadata, fingerprints, approvals, prompt suppressions, and use records only.
-- Vault-backed Env Draft values must stay masked in draft JSON and frontend state; resolve values only at save time.
-- Env Default Catalog rules are data-only. Do not add rule behavior that runs commands or bypasses approval gates.
-- AI Env Review must use bounded context and structured Env Patch; never send raw secrets, vault values, full `.env` files, or full source files by default.
-- Source Fix Suggestions for env loader paths are informational in foundation; do not auto-edit source for that flow.
+- Vault-backed Env Draft values must stay masked in draft JSON and frontend state; resolve only at save time.
+- Env Default Catalog rules are data-only. They must not run commands or bypass approval gates.
+- AI Env Review must never send raw secrets, vault values, full `.env` files, or full source files by default.
+- Source Fix Suggestions are informational; do not auto-edit source for that flow.
 - Unknown public repos should be tested in disposable machine or VM.
 
-## Docs
+## Docs And Git
 
 - README is for humans. Keep it short and useful.
 - AGENTS.md is for agents. Keep exact commands and project rules.
-- Use caveman talk in project docs unless user asks otherwise.
-- When Env Draft rules change, update `CONTEXT.md`; update ADR only for hard-to-reverse architectural choices.
-
-## PR / Commit
-
-- Commit message should be short caveman style.
-- State what changed.
-- Do not mention tools or agent unless user asks.
+- REVIEWERS.md is for review work.
+- Update `CONTEXT.md` when Env Draft rules change.
+- Update ADR only for hard-to-reverse architectural choices.
+- Commit messages should be short caveman style, state what changed, and not mention tools/agents unless user asks.

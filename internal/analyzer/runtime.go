@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"instantrepo/internal/domain"
@@ -44,6 +45,7 @@ func (a *RepositoryAnalyzer) enrichRuntimeContext(analysis *domain.RepositoryAna
 	runtimeContext := detectRuntimeContext(analysis.RepoPath)
 
 	analysis.Env = runtimeContext.envConfig
+	applyRepoEnvEdgeCases(analysis)
 	for _, service := range runtimeContext.services {
 		if !hasService(analysis.Services, service.Name, service.Source) {
 			analysis.Services = append(analysis.Services, service)
@@ -140,14 +142,15 @@ func detectRuntimeContext(repoPath string) runtimeContext {
 		})
 	}
 
-	existingValues := map[string]string{}
+	existingValuesByTarget := map[string]map[string]string{}
 	if envConfig.TargetExists {
-		existingValues = parseEnvValues(envConfig.TargetPath)
+		existingValuesByTarget[envConfig.TargetPath] = parseEnvValues(envConfig.TargetPath)
 		evidence = append(evidence, ".env found in "+filepath.Dir(envConfig.TargetPath))
 	}
 
 	var classifiedVars []domain.EnvVarRequirement
 	for _, envVar := range envConfig.Variables {
+		existingValues := envTargetExistingValues(envConfig, envVar, existingValuesByTarget)
 		envRequirement := classifyEnvVar(envVar, existingValues, localServices)
 		classifiedVars = append(classifiedVars, envRequirement)
 	}
@@ -352,6 +355,25 @@ func findFirstExisting(repoPath string, candidates []string) string {
 	return ""
 }
 
+func envTargetExistingValues(envConfig domain.EnvironmentConfig, envVar domain.EnvVarRequirement, cache map[string]map[string]string) map[string]string {
+	targetPath := envConfig.TargetPath
+	if strings.TrimSpace(envVar.TargetDir) != "" {
+		targetPath = filepath.Join(envVar.TargetDir, ".env")
+	}
+	if strings.TrimSpace(targetPath) == "" {
+		return map[string]string{}
+	}
+	if values, ok := cache[targetPath]; ok {
+		return values
+	}
+	if !util.FileExists(targetPath) {
+		cache[targetPath] = map[string]string{}
+		return cache[targetPath]
+	}
+	cache[targetPath] = parseEnvValues(targetPath)
+	return cache[targetPath]
+}
+
 func parseEnvValues(path string) map[string]string {
 	result := map[string]string{}
 	if path == "" || !util.FileExists(path) {
@@ -416,7 +438,7 @@ func findNearestManifest(repoRoot, startDir string) string {
 }
 
 func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []domain.SourceFixSuggestion, []string) {
-	seen := map[string]bool{
+	ignoredNames := map[string]bool{
 		"NODE_ENV": true,
 		"PATH":     true,
 		"HOME":     true,
@@ -425,6 +447,7 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 		"TZ":       true,
 		"PORT":     true,
 	}
+	seen := map[string]bool{}
 
 	var variables []domain.EnvVarRequirement
 	targetPathVotes := make(map[string]int)
@@ -474,7 +497,7 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 		}
 
 		matches := pattern.FindAllStringSubmatch(content, -1)
-		foundAny := false
+		foundCount := 0
 
 		for _, match := range matches {
 			var name string
@@ -484,11 +507,12 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 				name = match[2]
 			}
 
-			if name == "" || seen[name] {
+			if name == "" || ignoredNames[name] {
 				continue
 			}
-			seen[name] = true
-			foundAny = true
+			if isViteImportMetaEnvBuiltIn(match[0], name) {
+				continue
+			}
 
 			targetDir := inferEnvUsageTargetDir(repoPath, path)
 			if loaderTargetDir != "" {
@@ -496,6 +520,17 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 			}
 			if hasUnsafeLoader {
 				targetDir = ""
+			}
+			key := name + "\x00" + targetDir
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			foundCount++
+
+			suggestedValue := ""
+			if isPortEnvVar(name) {
+				suggestedValue = envAccessPortFallbackValue(content, match[0])
 			}
 
 			variables = append(variables, domain.EnvVarRequirement{
@@ -507,11 +542,11 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 				CurrentStatus:  "missing",
 				FillStrategy:   "user_required",
 				TargetDir:      targetDir,
-				SuggestedValue: "",
+				SuggestedValue: suggestedValue,
 			})
 		}
 
-		if foundAny {
+		if foundCount > 0 {
 			targetDir := inferEnvUsageTargetDir(repoPath, path)
 			if loaderTargetDir != "" {
 				targetDir = loaderTargetDir
@@ -520,7 +555,7 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 				targetDir = ""
 			}
 			if targetDir != "" {
-				targetPathVotes[targetDir] += len(matches)
+				targetPathVotes[targetDir] += foundCount
 			}
 		}
 
@@ -537,6 +572,40 @@ func scanCodeForEnvVars(repoPath string) ([]domain.EnvVarRequirement, string, []
 	}
 
 	return variables, bestTarget, sourceFixes, unknowns
+}
+
+func envAccessPortFallbackValue(content, access string) string {
+	pattern := regexp.MustCompile(regexp.QuoteMeta(access) + `\s*(?:\|\||\?\?)\s*(?:"([^"]+)"|'([^']+)'|([0-9]+))`)
+	matches := pattern.FindStringSubmatch(content)
+	if len(matches) == 0 {
+		return ""
+	}
+	for _, candidate := range matches[1:] {
+		if port, ok := parsePortValue(candidate); ok {
+			return strconv.Itoa(port)
+		}
+	}
+	return ""
+}
+
+func parsePortValue(value string) (int, bool) {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, false
+	}
+	return port, true
+}
+
+func isViteImportMetaEnvBuiltIn(access, name string) bool {
+	if !strings.HasPrefix(access, "import.meta.env.") {
+		return false
+	}
+	switch name {
+	case "MODE", "DEV", "PROD", "BASE_URL", "SSR":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeDotenvLoaderTargetDir(repoRoot, content string) (string, bool) {

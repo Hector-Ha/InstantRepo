@@ -189,6 +189,9 @@ func envTemplateCopyStep(goos string, analysis domain.RepositoryAnalysis) (domai
 	if analysis.Env.TemplatePath == "" && len(analysis.Env.Variables) == 0 {
 		return domain.ExecutionStep{}, false
 	}
+	if !hasLocalEnvWriteTarget(analysis.Env) {
+		return domain.ExecutionStep{}, false
+	}
 
 	title := "Prepare local .env file"
 	reason := "InstantRepo can create or update the local .env file using safe defaults and clear placeholders."
@@ -211,6 +214,18 @@ func envTemplateCopyStep(goos string, analysis domain.RepositoryAnalysis) (domai
 		Confidence:       0.97,
 		Reason:           reason,
 	}, true
+}
+
+func hasLocalEnvWriteTarget(env domain.EnvironmentConfig) bool {
+	if strings.TrimSpace(env.TargetPath) != "" {
+		return true
+	}
+	for _, envVar := range env.Variables {
+		if strings.TrimSpace(envVar.TargetDir) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func versionLooksCompatible(installedVersion, constraint string) bool {

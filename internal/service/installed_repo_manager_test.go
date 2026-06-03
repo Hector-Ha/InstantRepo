@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,10 +33,14 @@ func TestListInstalledReposIncludesManagerRowShape(t *testing.T) {
 	defer sqliteStore.Close()
 
 	analyzedAt := time.Date(2026, 5, 8, 10, 30, 0, 0, time.UTC)
+	repoPath := filepath.Join(t.TempDir(), "instant-repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("create repo path: %v", err)
+	}
 	repo, err := sqliteStore.SaveInstalledRepo(ctx, domain.InstalledRepo{
 		RawURL:         "https://github.com/example/instant-repo.git",
 		NormalizedURL:  "https://github.com/example/instant-repo",
-		LocalPath:      filepath.Join(t.TempDir(), "instant-repo"),
+		LocalPath:      repoPath,
 		Status:         domain.InstalledRepoStatusAnalyzed,
 		LastAnalyzedAt: analyzedAt,
 	})
@@ -63,6 +68,9 @@ func TestListInstalledReposIncludesManagerRowShape(t *testing.T) {
 	if got.LocalPath != repo.LocalPath || got.Status != domain.InstalledRepoStatusAnalyzed {
 		t.Fatalf("expected stored local path and status, got %+v", got)
 	}
+	if !got.LocalPathExists {
+		t.Fatalf("expected existing local path to be reported")
+	}
 	if !got.LastAnalyzedAt.Equal(analyzedAt) {
 		t.Fatalf("expected last analyzed at %s, got %s", analyzedAt, got.LastAnalyzedAt)
 	}
@@ -71,6 +79,36 @@ func TestListInstalledReposIncludesManagerRowShape(t *testing.T) {
 	}
 	if !got.LastActivityAt.Equal(session.UpdatedAt) {
 		t.Fatalf("expected last activity to prefer setup time %s, got %s", session.UpdatedAt, got.LastActivityAt)
+	}
+}
+
+func TestListInstalledReposMarksMissingLocalPath(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore := openManagerTestStore(t)
+	defer sqliteStore.Close()
+
+	missingPath := filepath.Join(t.TempDir(), "deleted-repo")
+	if _, err := sqliteStore.SaveInstalledRepo(ctx, domain.InstalledRepo{
+		RawURL:         "https://github.com/example/deleted-repo.git",
+		NormalizedURL:  "https://github.com/example/deleted-repo",
+		LocalPath:      missingPath,
+		Status:         domain.InstalledRepoStatusAnalyzed,
+		LastAnalyzedAt: time.Date(2026, 5, 8, 10, 30, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SaveInstalledRepo returned error: %v", err)
+	}
+
+	app := NewAppServiceWithInstalledRepoStore(sqliteStore)
+	manager, err := app.ListInstalledRepos(ctx)
+	if err != nil {
+		t.Fatalf("ListInstalledRepos returned error: %v", err)
+	}
+
+	if len(manager.Repos) != 1 {
+		t.Fatalf("expected one Installed Repo row, got %+v", manager.Repos)
+	}
+	if manager.Repos[0].LocalPathExists {
+		t.Fatalf("expected missing local path to be reported, got %+v", manager.Repos[0])
 	}
 }
 

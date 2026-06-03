@@ -61,9 +61,9 @@ test("EnvDraftPanel renders grouped target files and metadata", () => {
 });
 
 test("EnvDraftPanel displays backend vault binding display name", () => {
-  const draft: EnvDraft = {
-    repoPath: "C:\\Repos\\app",
-    targets: [
+	const draft: EnvDraft = {
+		repoPath: "C:\\Repos\\app",
+		targets: [
       {
         relativePath: ".env",
         absolutePath: "C:\\Repos\\app\\.env",
@@ -96,6 +96,47 @@ test("EnvDraftPanel displays backend vault binding display name", () => {
     />,
   );
 
-  expect(html).toContain("OpenAI dev key");
-  expect(html).toContain("abc123ff");
+	expect(html).toContain("OpenAI dev key");
+	expect(html).toContain("abc123ff");
+});
+
+test("EnvDraftPanel shows structured value instructions", () => {
+	const draft: EnvDraft = {
+		repoPath: "C:\\repo",
+		targets: [
+			{
+				relativePath: ".env",
+				absolutePath: "C:\\repo\\.env",
+				originalContent: "",
+				values: [
+					{
+						name: "CUSTOM_SECRET",
+						value: "",
+						secret: true,
+						confidence: 0.72,
+						valueClass: "service_credential",
+						instructions: [
+							"Obtain the required value for CUSTOM_SECRET from the project owner.",
+							"Do not commit secrets to source control.",
+						],
+						provenance: { source: "draft" },
+					},
+				],
+			},
+		],
+	};
+
+	const html = renderToStaticMarkup(
+		<EnvDraftPanel
+			draft={draft}
+			mode="structured"
+			selectedRawTarget=".env"
+			onChange={noop}
+			onModeChange={noop}
+			onSelectedRawTargetChange={noop}
+		/>,
+	);
+
+	expect(html).toContain("Obtain the required value");
+	expect(html).toContain("Do not commit secrets");
 });

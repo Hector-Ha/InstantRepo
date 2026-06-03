@@ -93,13 +93,14 @@ type InstalledRepoDetailsResponse struct {
 }
 
 type InstalledRepoSummary struct {
-	ID             int64     `json:"id"`
-	ProjectName    string    `json:"projectName"`
-	LocalPath      string    `json:"localPath"`
-	Status         string    `json:"status"`
-	LastAnalyzedAt time.Time `json:"lastAnalyzedAt"`
-	LastSetupAt    time.Time `json:"lastSetupAt"`
-	LastActivityAt time.Time `json:"lastActivityAt"`
+	ID              int64     `json:"id"`
+	ProjectName     string    `json:"projectName"`
+	LocalPath       string    `json:"localPath"`
+	LocalPathExists bool      `json:"localPathExists"`
+	Status          string    `json:"status"`
+	LastAnalyzedAt  time.Time `json:"lastAnalyzedAt"`
+	LastSetupAt     time.Time `json:"lastSetupAt"`
+	LastActivityAt  time.Time `json:"lastActivityAt"`
 }
 
 type SetupSessionSummary struct {
@@ -395,6 +396,8 @@ type EnvVarRequirement struct {
 	Instructions    []string            `json:"instructions,omitempty"`
 	TopologySignals []AppTopologySignal `json:"-"`
 	ProjectName     string              `json:"-"`
+	DefaultSource   string              `json:"-"`
+	DefaultClass    string              `json:"-"`
 }
 
 const (

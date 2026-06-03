@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnalyzeRepository,
   ApproveEnvVaultEntry,
+  canUseLocalEnvDraftFallback,
   ClearEnvContributionQueue,
   ExecuteStep,
   GenerateEnvDraft,
@@ -49,7 +50,14 @@ import { EnvVaultManager } from "./EnvVaultManager";
 import { EnvVaultPrompt } from "./EnvVaultPrompt";
 import { SettingsView } from "./SettingsView";
 import { redactLikelySecrets } from "./redaction";
-import { getMissingRequiredTools, getSafetyAttention } from "./attention";
+import {
+  envRequirementKey,
+  envRequirementTargetLabel,
+  getMissingRequiredTools,
+  getSafetyAttention,
+  getUnresolvedEnv,
+} from "./attention";
+import { canBuildEnvDraftFromPlan } from "./envDraft";
 import {
   clonePreflight,
   planClonePreflightFlow,
@@ -57,6 +65,33 @@ import {
   type ClonePreflightPlan,
   type ClonePreflightResponse,
 } from "./clonePreflight";
+
+const viewChrome: Record<AppView, { title: string; description: string }> = {
+  overview: {
+    title: "Overview",
+    description: "Analyze a repository to unlock focused workspaces.",
+  },
+  repos: {
+    title: "Repositories",
+    description: "Inspect remembered local repos and recent setup history.",
+  },
+  environment: {
+    title: "Environment",
+    description: "Generate, review, and save env drafts.",
+  },
+  steps: {
+    title: "Setup Steps",
+    description: "Review one command at a time before execution.",
+  },
+  vault: {
+    title: "Env Vault",
+    description: "Manage reusable credential metadata and approvals.",
+  },
+  settings: {
+    title: "Settings",
+    description: "Control local contribution and AI review settings.",
+  },
+};
 
 const initialRepoUrl = "https://github.com/example/instantrepo-demo";
 const initialFolder = "C:\\Users\\Admin\\Desktop\\Workspaces";
@@ -307,48 +342,54 @@ function InstalledRepoManager({
       ) : (
         <div className="manager-layout">
           <div className="manager-list" aria-label="Installed Repos">
-            {repos.map((repo) => (
-              <article
-                className={`manager-row ${repo.id === selectedRepoId ? "active" : ""}`}
-                key={repo.id}
-              >
-                <div className="manager-row__body">
-                  <div className="manager-row__title">
-                    <strong>{repo.projectName}</strong>
-                    <StatusBadge status={repo.status} />
+            {repos.map((repo) => {
+              const localPathMissing = repo.localPathExists === false;
+              return (
+                <article
+                  className={`manager-row ${repo.id === selectedRepoId ? "active" : ""}`}
+                  key={repo.id}
+                >
+                  <div className="manager-row__body">
+                    <div className="manager-row__title">
+                      <strong>{repo.projectName}</strong>
+                      <StatusBadge
+                        status={localPathMissing ? "missing" : repo.status}
+                      />
+                    </div>
+                    <p>{repo.localPath}</p>
+                    <div className="manager-meta">
+                      {localPathMissing ? <span>Missing folder</span> : null}
+                      <span>
+                        Last activity{" "}
+                        {formatManagerTime(repo.lastActivityAt, "not recorded")}
+                      </span>
+                      <span>
+                        Last setup{" "}
+                        {formatManagerTime(repo.lastSetupAt, "not recorded")}
+                      </span>
+                    </div>
                   </div>
-                  <p>{repo.localPath}</p>
-                  <div className="manager-meta">
-                    <span>
-                      Last activity{" "}
-                      {formatManagerTime(repo.lastActivityAt, "not recorded")}
-                    </span>
-                    <span>
-                      Last setup{" "}
-                      {formatManagerTime(repo.lastSetupAt, "not recorded")}
-                    </span>
+                  <div className="manager-actions">
+                    <button
+                      type="button"
+                      className="button button-subtle"
+                      onClick={() => onShowDetails(repo)}
+                      disabled={loading}
+                    >
+                      History
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => onAnalyze(repo)}
+                      disabled={loading || localPathMissing}
+                    >
+                      Analyze
+                    </button>
                   </div>
-                </div>
-                <div className="manager-actions">
-                  <button
-                    type="button"
-                    className="button button-subtle"
-                    onClick={() => onShowDetails(repo)}
-                    disabled={loading}
-                  >
-                    History
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => onAnalyze(repo)}
-                    disabled={loading}
-                  >
-                    Analyze
-                  </button>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
 
           {details ? (
@@ -420,7 +461,7 @@ function StepButton({
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<AppView>("setup");
+  const [activeView, setActiveView] = useState<AppView>("overview");
   const [repoUrl, setRepoUrl] = useState(initialRepoUrl);
   const [folderPath, setFolderPath] = useState(initialFolder);
   const [snapshot, setSnapshot] = useState<AnalyzeSnapshot | null>(null);
@@ -481,10 +522,7 @@ export default function App() {
   );
 
   const unresolvedEnv = useMemo(
-    () =>
-      snapshot?.plan.env.variables.filter(
-        (item) => item.currentStatus === "user_required",
-      ) ?? [],
+    () => getUnresolvedEnv(snapshot),
     [snapshot],
   );
 
@@ -581,14 +619,17 @@ export default function App() {
     }
   }, [activeView, loadVaultEntries]);
 
-  const syncSnapshot = (nextSnapshot: AnalyzeSnapshot, nextEnvDraft?: EnvDraft) => {
+  const syncSnapshot = (
+    nextSnapshot: AnalyzeSnapshot,
+    nextEnvDraft?: EnvDraft | null,
+  ) => {
     setSnapshot(nextSnapshot);
     if (nextEnvDraft !== undefined) {
       setEnvDraft(nextEnvDraft);
       setSelectedRawTarget((current) =>
-        nextEnvDraft.targets.some((target) => target.relativePath === current)
+        nextEnvDraft?.targets.some((target) => target.relativePath === current)
           ? current
-          : (nextEnvDraft.targets[0]?.relativePath ?? ""),
+          : (nextEnvDraft?.targets[0]?.relativePath ?? ""),
       );
     }
     setStepStates((current) => buildStepStateMap(nextSnapshot, current));
@@ -606,6 +647,11 @@ export default function App() {
     try {
       return await GenerateEnvDraft(localPath);
     } catch (error) {
+      if (!canUseLocalEnvDraftFallback(error)) {
+        const message = toErrorMessage(error);
+        appendActivity("critical", "Draft Failed", message);
+        throw error;
+      }
       appendActivity(
         "warning",
         "Draft Fallback",
@@ -711,7 +757,9 @@ export default function App() {
         );
       }
 
-      const draft = await loadEnvDraft(response.source.path, response);
+      const draft = canBuildEnvDraftFromPlan(response)
+        ? await loadEnvDraft(response.source.path, response)
+        : null;
       syncSnapshot(response, draft);
 
       appendActivity(
@@ -741,6 +789,9 @@ export default function App() {
     setBusyLabel("Generating .env draft...");
 
     try {
+      if (!canBuildEnvDraftFromPlan(snapshot)) {
+        throw new Error("No local env target is available for this repository.");
+      }
       const draft = await loadEnvDraft(snapshot.source.path, snapshot);
       setEnvDraft(draft);
       setSelectedRawTarget(draft.targets[0]?.relativePath ?? "");
@@ -1218,16 +1269,17 @@ export default function App() {
   const bannerState = busyLabel ? "busy" : errorMessage ? "failed" : "ready";
   const runDisabled =
     busyLabel !== null || !selectedStep || !isExecutableStep(selectedStep);
+  const activeChrome = viewChrome[activeView];
+  const headerContext = snapshot
+    ? `${snapshot.analysis.projectName} - ${snapshot.source.path}`
+    : activeChrome.description;
 
   return (
     <div className="app">
       <header className="page-header">
         <div>
-          <h1>InstantRepo</h1>
-          <p>
-            Analyze a repository, prepare the environment file, then run the
-            next setup step.
-          </p>
+          <h1>{activeChrome.title}</h1>
+          <p>{headerContext}</p>
         </div>
         <div
           className={`status-banner ${statusClass(bannerState)}`}
@@ -1306,15 +1358,16 @@ export default function App() {
           />
         ) : null}
 
-        {activeView === "setup" ? (
+        {["overview", "environment", "steps"].includes(activeView) ? (
           <>
 
         {/* ── Section 1: Repository Input ── */}
+        {activeView === "overview" ? (
         <section className="card" aria-labelledby="section-repo">
           <div className="section-heading">
             <div>
               <h2 id="section-repo">
-                <span className="section-number">2</span>Choose Repository
+                <span className="section-number">1</span>Choose Repository
               </h2>
               <p>Paste a remote URL or work from an existing local folder.</p>
             </div>
@@ -1411,13 +1464,15 @@ export default function App() {
             />
           ) : null}
         </section>
+        ) : null}
 
         {/* ── Section 2: Analysis Summary ── */}
+        {activeView === "overview" ? (
         <section className="card" aria-labelledby="section-summary">
           <div className="section-heading">
             <div>
               <h2 id="section-summary">
-                <span className="section-number">3</span>Analysis Summary
+                <span className="section-number">2</span>Analysis Summary
               </h2>
               <p>
                 Review what InstantRepo found before editing files or running
@@ -1459,11 +1514,18 @@ export default function App() {
                       Missing tool: <strong>{tool.tool}</strong>
                     </li>
                   ))}
-                  {unresolvedEnv.map((item) => (
-                    <li key={item.name}>
-                      Required secret: <strong>{item.name}</strong>
-                    </li>
-                  ))}
+                  {unresolvedEnv.map((item) => {
+                    const targetLabel = envRequirementTargetLabel(
+                      item,
+                      snapshot.source.path,
+                    );
+                    return (
+                      <li key={envRequirementKey(item)}>
+                        Required secret: <strong>{item.name}</strong>
+                        {targetLabel ? <span> ({targetLabel})</span> : null}
+                      </li>
+                    );
+                  })}
                   {safetyFindings.map((finding) => (
                     <li key={`${finding.summary}-${finding.filePath ?? ""}`}>
                       Safety: <strong>{finding.summary}</strong>
@@ -1487,13 +1549,50 @@ export default function App() {
             </div>
           )}
         </section>
+        ) : null}
+
+        {activeView === "overview" ? (
+        <section className="card action-panel" aria-labelledby="section-next-action">
+          <div className="section-heading">
+            <div>
+              <h2 id="section-next-action">
+                <span className="section-number">3</span>Next Action
+              </h2>
+              <p>Move into one focused workspace after the repo is analyzed.</p>
+            </div>
+          </div>
+          <div className="action-grid">
+            <button
+              type="button"
+              className="action-card"
+              onClick={() => setActiveView("environment")}
+              disabled={!snapshot}
+            >
+              <span>Environment</span>
+              <strong>Generate Env Draft</strong>
+              <small>Resolve required values and save masked files.</small>
+            </button>
+            <button
+              type="button"
+              className="action-card"
+              onClick={() => setActiveView("steps")}
+              disabled={!snapshot}
+            >
+              <span>Setup Steps</span>
+              <strong>Review Setup Plan</strong>
+              <small>Inspect command risk before running one step.</small>
+            </button>
+          </div>
+        </section>
+        ) : null}
 
         {/* ── Section 3: Environment File ── */}
+        {activeView === "environment" ? (
         <section className="card" aria-labelledby="section-env">
           <div className="section-heading">
             <div>
               <h2 id="section-env">
-                <span className="section-number">4</span>Environment File
+                <span className="section-number">1</span>Environment File
               </h2>
               <p>
                 Generate the draft first, then edit values directly and save the
@@ -1527,18 +1626,29 @@ export default function App() {
           {snapshot && envDraft ? (
             <>
               <div className="env-info">
-                {snapshot.plan.env.variables.map((item) => (
-                  <div className="env-row" key={item.name}>
-                    <div>
-                      <strong>{item.name}</strong>
-                      <p>
-                        {item.instructions?.[0] ??
-                          "No additional instructions."}
-                      </p>
+                {snapshot.plan.env.variables.map((item) => {
+                  const targetLabel = envRequirementTargetLabel(
+                    item,
+                    snapshot.source.path,
+                  );
+                  return (
+                    <div className="env-row" key={envRequirementKey(item)}>
+                      <div>
+                        <strong>{item.name}</strong>
+                        {targetLabel ? (
+                          <span className="env-row__target">
+                            {targetLabel}
+                          </span>
+                        ) : null}
+                        <p>
+                          {item.instructions?.[0] ??
+                            "No additional instructions."}
+                        </p>
+                      </div>
+                      <StatusBadge status={item.currentStatus} />
                     </div>
-                    <StatusBadge status={item.currentStatus} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <EnvDraftPanel
@@ -1559,13 +1669,15 @@ export default function App() {
             </div>
           )}
         </section>
+        ) : null}
 
         {/* ── Section 4: Setup Steps ── */}
+        {activeView === "steps" ? (
         <section className="card" aria-labelledby="section-steps">
           <div className="section-heading">
             <div>
               <h2 id="section-steps">
-                <span className="section-number">5</span>Setup Steps
+                <span className="section-number">1</span>Setup Steps
               </h2>
               <p>Select one step, read what it does, then run it.</p>
             </div>
@@ -1660,13 +1772,15 @@ export default function App() {
             </div>
           )}
         </section>
+        ) : null}
 
         {/* ── Section 5: Activity Feed ── */}
+        {activeView === "overview" ? (
         <section className="card" aria-labelledby="section-activity">
           <div className="section-heading">
             <div>
               <h2 id="section-activity">
-                <span className="section-number">6</span>Recent Events
+                <span className="section-number">4</span>Recent Events
               </h2>
               <p>Simple feedback for the last actions taken in this session.</p>
             </div>
@@ -1691,6 +1805,7 @@ export default function App() {
             ))}
           </div>
         </section>
+        ) : null}
           </>
         ) : null}
 

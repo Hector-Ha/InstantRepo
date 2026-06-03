@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import {
   applyRawTargetContent,
+  canBuildEnvDraftFromPlan,
   clearVaultBinding,
   renderRawTarget,
   updateEnvDraftValue,
 } from "./src/envDraft";
-import type { EnvDraft } from "./src/types";
+import type { AnalyzeSnapshot, EnvDraft } from "./src/types";
 
 function twoTargetDraft(): EnvDraft {
   return {
@@ -56,19 +57,49 @@ test("structured draft edit is scoped by target file and variable name", () => {
 });
 
 test("raw target edits update only the selected target", () => {
-  const edited = applyRawTargetContent(
-    twoTargetDraft(),
-    "web\\.env",
+	const edited = applyRawTargetContent(
+		twoTargetDraft(),
+		"web\\.env",
     "API_URL=http://localhost:3000\n",
   );
 
   expect(edited.targets[0].values[0].value).toBe("http://localhost:8080");
-  expect(edited.targets[1].values[0].value).toBe("http://localhost:3000");
+	expect(edited.targets[1].values[0].value).toBe("http://localhost:3000");
+});
+
+test("raw target edits keep new assignments", () => {
+  const edited = applyRawTargetContent(
+    twoTargetDraft(),
+    "web\\.env",
+    "API_URL=http://localhost:3000\nGREETING=hello\n",
+  );
+
+  expect(edited.targets[1].values.map((value) => value.name)).toContain(
+    "GREETING",
+  );
+  expect(
+    edited.targets[1].values.find((value) => value.name === "GREETING")?.value,
+  ).toBe("hello");
+});
+
+test("raw target edits parse quoted values as env values", () => {
+  const edited = applyRawTargetContent(
+    twoTargetDraft(),
+    "web\\.env",
+    'API_URL="http://localhost:3000/hello world"\n',
+  );
+
+  expect(edited.targets[1].values[0].value).toBe(
+    "http://localhost:3000/hello world",
+  );
+  expect(renderRawTarget(edited.targets[1])).toContain(
+    "API_URL=http://localhost:3000/hello world",
+  );
 });
 
 test("vault bindings render masked and can be cleared for manual entry", () => {
-  const draft = twoTargetDraft();
-  draft.targets[0].values[0] = {
+	const draft = twoTargetDraft();
+	draft.targets[0].values[0] = {
     ...draft.targets[0].values[0],
     value: "",
     vaultBinding: { fingerprint: "abc123ff", displayName: "OpenAI dev key" },
@@ -95,4 +126,22 @@ test("deleting a raw vault line clears the vault binding", () => {
 
   expect(edited.targets[0].values[0].vaultBinding).toBeUndefined();
   expect(edited.targets[0].values[0].value).toBe("");
+});
+
+test("env draft generation is skipped without writable target", () => {
+  const snapshot = {
+    plan: {
+      env: {
+        variables: [
+          {
+            name: "OPENAI_API_KEY",
+            currentStatus: "missing",
+            fillStrategy: "user_required",
+          },
+        ],
+      },
+    },
+  } as AnalyzeSnapshot;
+
+  expect(canBuildEnvDraftFromPlan(snapshot)).toBe(false);
 });
